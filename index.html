@@ -448,8 +448,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
 // ═══════════════════════════════════════════════════════════════
 // ⚠️  CONFIGURACIÓN — reemplaza con tus credenciales de Supabase
 // ═══════════════════════════════════════════════════════════════
-const SUPABASE_URL = "https://wqimdlyytkfeavqacopr.supabase.co";   // 👈 REEMPLAZA ESTO
-const SUPABASE_KEY = "sb_publishable_1Qie8RRDhgwbqk7xgjbh4g_j9I4U50K;                    // 👈 REEMPLAZA ESTO
+const const SUPABASE_URL = "https://wqimdlyytkfeavqacopr.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndxaW1kbHl5dGtmZWF2cWFjb3ByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyODI1MzgsImV4cCI6MjA4OTg1ODUzOH0.EEl-jtJVnULHyihT6u1ugYDbvVv3-86ryPRMWPlxGy4";
 // ═══════════════════════════════════════════════════════════════
 
 const VENDEDORES = ["Gus","Fao","Lau","Rob","Ale","Pau"];
@@ -532,27 +532,24 @@ const initials=n=>(n||"?").split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCa
 
 // ── INIT ───────────────────────────────────────────────────────
 async function init(){
-  document.getElementById("loadingTxt").textContent="Conectando con la base de datos…";
+  // Try Supabase — show loading max 6s then fallback
+  const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),6000));
   try{
-    [deals,metas]=await Promise.all([dbGet("deals"),dbGet("metas")]);
+    document.getElementById("loadingTxt").textContent="Conectando con la base de datos…";
+    [deals,metas]=await Promise.race([
+      Promise.all([dbGet("deals"),dbGet("metas")]),
+      timeout
+    ]);
     syncState("ok");
     document.getElementById("loadingOverlay").style.display="none";
     renderS1();
   } catch(e){
-    // Fallback to demo mode if Supabase not configured
-    if(SUPABASE_URL.includes("TU_PROJECT_URL")){
-      document.getElementById("loadingTxt").textContent="⚠️ Modo demo — configura Supabase para modo real";
-      setTimeout(()=>{
-        deals=getDemoDeals(); metas=getDemoMetas();
-        syncState("err","Demo");
-        document.getElementById("syncLbl").textContent="Modo demo";
-        document.getElementById("loadingOverlay").style.display="none";
-        renderS1();
-      },1200);
-    } else {
-      document.getElementById("loadingTxt").textContent="Error de conexión: "+e.message;
-      syncState("err");
-    }
+    // Connection failed or timed out — load demo data immediately
+    deals=getDemoDeals(); metas=getDemoMetas();
+    document.getElementById("syncDot").className="sync-dot err";
+    document.getElementById("syncLbl").textContent=e.message==="timeout"?"Sin conexión — modo demo":"Error BD — modo demo";
+    document.getElementById("loadingOverlay").style.display="none";
+    renderS1();
   }
 }
 
