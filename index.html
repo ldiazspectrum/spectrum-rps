@@ -232,6 +232,14 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
 .trend-bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;}
 .trend-bar{width:100%;border-radius:3px 3px 0 0;min-height:3px;}
 .trend-lbl{font-size:9px;color:var(--muted);text-align:center;white-space:nowrap;overflow:hidden;width:100%;}
+.upsell-box{background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:8px;padding:11px 13px;margin-top:10px;}
+.upsell-box label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#2563eb;display:block;margin-bottom:5px;}
+.upsell-box input{border:1.5px solid #bfdbfe;border-radius:7px;padding:8px 11px;font-family:inherit;font-size:14px;font-weight:700;color:#1a3a6e;background:var(--white);outline:none;width:100%;}
+.upsell-box input:focus{border-color:var(--sky);}
+.upsell-delta{font-size:11px;font-weight:700;margin-top:6px;}
+.upsell-delta.pos{color:var(--green);}
+.upsell-delta.neg{color:var(--red);}
+
 /* City Core multi-value */
 .city-rows{display:flex;flex-direction:column;gap:8px;margin-top:2px;}
 .city-row{display:flex;align-items:center;gap:8px;}
@@ -408,7 +416,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
       <div class="field"><label>Producto / Medio</label>
         <select id="nd_pr"><option>Patrocinios</option><option>Experiencias</option><option>Medios</option><option>Plaza</option><option>OOH</option></select>
       </div>
-      <div class="field"><label>¿Upselling?</label><select id="nd_up"><option value="0">No</option><option value="1">Sí</option></select></div>
+      <div class="field"><label>¿Upselling?</label><select id="nd_up" onchange="toggleUpsellBox('nd_upsellBox','nd_prev','nd_pv','nd_delta')"><option value="0">No</option><option value="1">Sí</option></select></div>
       <div class="field"><label>¿Medio Nuevo?</label><select id="nd_nm"><option value="0">No</option><option value="1">Sí</option></select></div>
       <div class="field"><label>Status</label>
         <select id="nd_st" onchange="toggleCRNew()">
@@ -428,6 +436,13 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
     <div id="nd_crBox" class="closed-rev-box" style="display:none">
       <label>✓ Closed Revenue — monto real negociado ($)</label>
       <input type="number" id="nd_cr" placeholder="0" min="0">
+    </div>
+    <!-- Upselling previous value -->
+    <div id="nd_upsellBox" class="upsell-box" style="display:none">
+      <label>¿Cuánto compraba antes este cliente? ($)</label>
+      <input type="number" id="nd_prev" placeholder="0" min="0"
+             oninput="calcUpsellDelta('nd_prev','nd_pv','nd_delta')">
+      <div class="upsell-delta" id="nd_delta"></div>
     </div>
     <div class="field" style="margin-top:12px">
       <div class="prob-row"><label>Probabilidad</label><span class="prob-val" id="nd_pl">50%</span></div>
@@ -505,10 +520,14 @@ async function dbUpsert(table,body,onConflict){
   if(!r.ok) throw new Error(await r.text());
   return r.json();
 }
-function syncState(state){
+function syncState(state,msg){
   const dot=document.getElementById("syncDot"),lbl=document.getElementById("syncLbl");
   dot.className="sync-dot "+(state==="ok"?"ok":state==="err"?"err":"syncing");
-  lbl.textContent=state==="ok"?"Conectado":state==="err"?"Sin conexión":"Guardando…";
+  if(msg){ lbl.textContent=msg; return; }
+  const pending=deals.filter(d=>d._pending).length;
+  if(state==="ok") lbl.textContent="Conectado";
+  else if(state==="err") lbl.textContent=pending?`Sin conexión · ${pending} pendiente${pending>1?"s":""}…`:"Sin conexión";
+  else lbl.textContent=pending?`Guardando ${pending}…`:"Guardando…";
 }
 
 let deals=[],metas=[];
@@ -524,29 +543,48 @@ const $m=n=>"$"+Math.round(n||0).toLocaleString("es-MX");
 const initials=n=>(n||"?").split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();
 
 async function init(){
-  // 1. Show app instantly with local data
+  // 1. Always show app instantly — use local data if available
   document.getElementById("loadingOverlay").style.display="none";
   const local=loadLocal();
+  const hasPending=local&&local.deals&&local.deals.some(d=>d._pending);
   if(local&&local.deals&&local.deals.length){
     deals=local.deals; metas=local.metas||[];
-    document.getElementById("syncLbl").textContent="Datos locales";
+    const pendingCount=deals.filter(d=>d._pending).length;
+    document.getElementById("syncLbl").textContent=
+      pendingCount?`${pendingCount} cambio${pendingCount>1?"s":""} pendiente${pendingCount>1?"s":""}…`:"Sincronizando…";
+    document.getElementById("syncDot").className="sync-dot syncing";
   } else {
     deals=getDemoDeals(); metas=getDemoMetas();
-    document.getElementById("syncLbl").textContent="Modo demo";
+    document.getElementById("syncLbl").textContent="Conectando…";
   }
   renderS1();
-  // 2. Sync with Supabase silently (5s timeout)
+
+  // 2. Connect to Supabase
   try{
-    const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),5000));
-    const [d,m]=await Promise.race([Promise.all([dbGet("deals"),dbGet("metas")]),timeout]);
-    deals=d; metas=m; saveLocal();
-    syncState("ok");
-    renderS1();
-    if(curV&&curW) renderS3();
+    syncState("syncing");
+    if(hasPending){
+      // Upload pending first, then refresh
+      await syncPending();
+    } else {
+      // Just pull latest from server
+      const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),6000));
+      const [d,m]=await Promise.race([
+        Promise.all([dbGet("deals"),dbGet("metas")]),
+        timeout
+      ]);
+      deals=d; metas=m; saveLocal();
+      syncState("ok");
+      document.getElementById("syncLbl").textContent="Conectado";
+      renderS1();
+      if(curV&&curW) renderS3();
+    }
   } catch(e){
     syncState("err");
-    document.getElementById("syncLbl").textContent=local?"Sin conexión (datos locales)":"Sin conexión";
-    scheduleRetry();
+    const pendingCount=deals.filter(d=>d._pending).length;
+    document.getElementById("syncLbl").textContent=
+      pendingCount?`Sin conexión · ${pendingCount} pendiente${pendingCount>1?"s":""}`:
+      local?"Sin conexión (datos locales)":"Sin conexión";
+    scheduleRetry(); // Keep trying every 10s
   }
 }
 
@@ -693,7 +731,7 @@ function renderDeals(my){
           <span>${d.producto_medio}</span>
           ${getCores(d).map(cc=>`<span class="city-tag">${cc.city}${cc.value>0?" "+$m(cc.value):""}</span>`).join("")}
           ${d.is_new_media?'<span class="tag tag-gold">★ Nuevo Medio</span>':""}
-          ${d.is_upselling?'<span class="tag tag-blue">Upselling</span>':""}
+          ${d.is_upselling?`<span class="tag tag-blue">Upselling${d.previous_value?` +${Math.round((d.potential_value-d.previous_value)/d.previous_value*100)}%`:""}</span>`:""}
           ${isClosed(d)?'<span class="tag tag-green">✓ Closed</span>':""}
         </div>
       </div>
@@ -717,7 +755,7 @@ function renderDeals(my){
           <select id="epr_${d.id}">${PRODUCTOS.map(p=>`<option${p===d.producto_medio?" selected":""}>${p}</option>`).join("")}</select>
         </div>
         <div class="field"><label>¿Upselling?</label>
-          <select id="eu_${d.id}"><option value="0"${!d.is_upselling?" selected":""}>No</option><option value="1"${d.is_upselling?" selected":""}>Sí</option></select>
+          <select id="eu_${d.id}" onchange="toggleUpsellBox('eu_upsellBox_${d.id}','eu_prev_${d.id}','ep_${d.id}','eu_delta_${d.id}')"><option value="0"${!d.is_upselling?" selected":""}>No</option><option value="1"${d.is_upselling?" selected":""}>Sí</option></select>
         </div>
         <div class="field"><label>¿Nuevo Medio?</label>
           <select id="en_${d.id}"><option value="0"${!d.is_new_media?" selected":""}>No</option><option value="1"${d.is_new_media?" selected":""}>Sí</option></select>
@@ -732,6 +770,13 @@ function renderDeals(my){
       <div id="crBox_${d.id}" class="closed-rev-box" style="${isClosed(d)?"":"display:none"}">
         <label>✓ Closed Revenue ($)</label>
         <input type="number" id="ecr_${d.id}" value="${d.closed_revenue||""}" placeholder="0" min="0">
+      </div>
+      <!-- Upselling previous value -->
+      <div id="eu_upsellBox_${d.id}" class="upsell-box" style="${d.is_upselling?'':'display:none'}">
+        <label>¿Cuánto compraba antes este cliente? ($)</label>
+        <input type="number" id="eu_prev_${d.id}" value="${d.previous_value||''}" placeholder="0" min="0"
+               oninput="calcUpsellDelta('eu_prev_${d.id}','ep_${d.id}','eu_delta_${d.id}')">
+        <div class="upsell-delta" id="eu_delta_${d.id}">${d.previous_value&&d.potential_value?calcDeltaStr(d.previous_value,d.potential_value):''}</div>
       </div>
       <div class="field" style="margin-top:11px">
         <div class="prob-row"><label>Probabilidad</label><span class="prob-val" id="epl_${d.id}">${d.prob}%</span></div>
@@ -780,6 +825,7 @@ async function saveDeal(id){
     closed_revenue:st==="Closed"?(+document.getElementById("ecr_"+id).value||0):0,
     prob:+document.getElementById("epb_"+id).value,
     notes:document.getElementById("eno_"+id).value,
+    previous_value:+document.getElementById("eu_prev_"+id).value||0,
   };
   // 1. Save locally first — always works, instant
   const i=deals.findIndex(d=>d.id===id);
@@ -860,6 +906,9 @@ function openNewDeal(){
   document.getElementById("nd_pl").textContent="50%";
   document.getElementById("nd_st").value="Open";
   document.getElementById("nd_crBox").style.display="none";
+  document.getElementById("nd_upsellBox").style.display="none";
+  document.getElementById("nd_prev").value="";
+  document.getElementById("nd_delta").textContent="";
   document.getElementById("nd_cityRows").innerHTML="";
   addCityRow("nd_cityRows");
   document.getElementById("ndOv").classList.add("open");
@@ -891,6 +940,7 @@ async function saveND(){
     is_upselling:document.getElementById("nd_up").value==="1",
     is_new_media:document.getElementById("nd_nm").value==="1",
     notes:document.getElementById("nd_no").value,
+    previous_value:+document.getElementById("nd_prev").value||0,
   };
   // 1. Save locally first
   const localId=Date.now();
@@ -1094,51 +1144,115 @@ function renderSpProfile(v){
     <div class="dcard"><div class="dcard-title">City Core</div>${cityC}</div>`;
 }
 
-// ── Local storage persistence ───────────────────────────────────
-const LS_KEY="rps_local_v1";
+// ── Local storage ──────────────────────────────────────────────
+const LS_KEY="rps_local_v2";
 function saveLocal(){
-  try{ localStorage.setItem(LS_KEY,JSON.stringify({deals,metas})); } catch(e){}
+  try{ localStorage.setItem(LS_KEY,JSON.stringify({deals,metas,ts:Date.now()})); }catch(e){}
 }
 function loadLocal(){
-  try{
-    const d=localStorage.getItem(LS_KEY);
-    if(d){ const p=JSON.parse(d); return p; }
-  } catch(e){}
-  return null;
+  try{ const d=localStorage.getItem(LS_KEY); return d?JSON.parse(d):null; }catch(e){ return null; }
+}
+function clearPending(){
+  deals=deals.map(d=>({...d,_pending:false}));
+  saveLocal();
 }
 
-// ── Retry pending syncs ─────────────────────────────────────────
+// ── Pending queue ───────────────────────────────────────────────
+// Strip internal fields before sending to Supabase
+function toDbBody(d){
+  const {_pending, id, ...body} = d;
+  // Remove fields Supabase auto-generates
+  delete body.created_at;
+  return body;
+}
+
+// ── Retry loop — runs every 10s while there are pending items ───
 let retryTimer=null;
 function scheduleRetry(){
-  if(retryTimer) return;
-  retryTimer=setTimeout(async()=>{
-    retryTimer=null;
+  if(retryTimer) clearTimeout(retryTimer);
+  retryTimer=setTimeout(syncPending, 10000);
+}
+async function syncPending(){
+  retryTimer=null;
+  const pending=deals.filter(d=>d._pending);
+  if(!pending.length){
+    // No pending — just refresh from server
     try{
-      const pending=deals.filter(d=>d._pending);
-      if(pending.length){
-        for(const d of pending){
-          const {_pending,id,...body}=d;
-          try{
-            if(typeof id==="number"&&id>1700000000000){
-              const saved=await dbInsert("deals",body);
-              const sd=Array.isArray(saved)?saved[0]:saved;
-              deals=deals.filter(x=>x.id!==id);
-              if(sd) deals.push({...sd,_pending:false});
-            } else {
-              await dbUpdate("deals",id,body);
-              deals=deals.map(x=>x.id===id?{...x,_pending:false}:x);
-            }
-          } catch(e2){ /* keep pending */ }
-        }
-        saveLocal();
-      }
-      const [freshDeals,freshMetas]=await Promise.all([dbGet("deals"),dbGet("metas")]);
-      deals=freshDeals; metas=freshMetas; saveLocal();
+      const [fd,fm]=await Promise.all([dbGet("deals"),dbGet("metas")]);
+      deals=fd; metas=fm; saveLocal();
       syncState("ok");
-      renderS1();
-      if(curV&&curW) renderS3();
-    } catch(e){ scheduleRetry(); }
-  },15000); // retry after 15s
+      renderS1(); if(curV&&curW) renderS3();
+    }catch(e){ scheduleRetry(); }
+    return;
+  }
+  let anyFailed=false;
+  for(const d of pending){
+    try{
+      const isNewLocal = typeof d.id==="number" && d.id>1600000000000;
+      if(isNewLocal){
+        // New deal created offline — insert to Supabase
+        const body=toDbBody(d);
+        const saved=await dbInsert("deals",body);
+        const sd=Array.isArray(saved)?saved[0]:saved;
+        // Replace local ID with server ID
+        deals=deals.filter(x=>x.id!==d.id);
+        if(sd) deals.push({...sd,_pending:false});
+      } else {
+        // Existing deal edited offline — update Supabase
+        const body=toDbBody(d);
+        await dbUpdate("deals",d.id,body);
+        deals=deals.map(x=>x.id===d.id?{...x,_pending:false}:x);
+      }
+      saveLocal();
+    } catch(e){
+      anyFailed=true;
+    }
+  }
+  if(anyFailed){
+    scheduleRetry();
+    return;
+  }
+  // All synced — do a full refresh
+  try{
+    const [fd,fm]=await Promise.all([dbGet("deals"),dbGet("metas")]);
+    deals=fd; metas=fm; saveLocal();
+    syncState("ok");
+    document.getElementById("syncLbl").textContent="Conectado";
+    renderS1(); if(curV&&curW) renderS3();
+  }catch(e){ scheduleRetry(); }
+}
+
+// ── Upselling helpers ──────────────────────────────────────────
+function toggleUpsellBox(boxId, prevId, newValId, deltaId){
+  // Find the upselling select — the one that triggered this call
+  // boxId is like 'nd_upsellBox' or 'eu_upsellBox_123'
+  const selId = boxId === 'nd_upsellBox' ? 'nd_up' : 'eu_' + boxId.replace('eu_upsellBox_','');
+  const sel = document.getElementById(selId);
+  const showBox = sel && sel.value === "1";
+  document.getElementById(boxId).style.display = showBox ? "" : "none";
+  if(!showBox){
+    document.getElementById(prevId).value="";
+    document.getElementById(deltaId).textContent="";
+  } else {
+    calcUpsellDelta(prevId, newValId, deltaId);
+  }
+}
+function calcUpsellDelta(prevId, newValId, deltaId){
+  const prev = +document.getElementById(prevId).value||0;
+  const newVal = +document.getElementById(newValId).value||0;
+  const el = document.getElementById(deltaId);
+  if(!el) return;
+  if(!prev||!newVal){ el.textContent=""; return; }
+  const delta = newVal - prev;
+  const pct = Math.round(delta/prev*100);
+  const sign = delta>=0?"▲":"▼";
+  el.className = "upsell-delta "+(delta>=0?"pos":"neg");
+  el.textContent = `${sign} ${$m(Math.abs(delta))} (${Math.abs(pct)}% ${delta>=0?"incremento":"reducción"} vs compra anterior)`;
+}
+function calcDeltaStr(prev, newVal){
+  if(!prev||!newVal) return "";
+  const delta=newVal-prev, pct=Math.round(delta/prev*100), sign=delta>=0?"▲":"▼";
+  return `<span class="upsell-delta ${delta>=0?"pos":"neg"}">${sign} ${("$"+Math.abs(delta).toLocaleString("es-MX"))} (${Math.abs(pct)}% ${delta>=0?"incremento":"reducción"})</span>`;
 }
 
 // ── Utils ───────────────────────────────────────────────────────
