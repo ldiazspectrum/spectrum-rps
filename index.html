@@ -532,299 +532,36 @@ const initials=n=>(n||"?").split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCa
 
 // ── INIT ───────────────────────────────────────────────────────
 async function init(){
-  // Try Supabase — show loading max 6s then fallback
-  const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),6000));
-  try{
-    document.getElementById("loadingTxt").textContent="Conectando con la base de datos…";
-    [deals,metas]=await Promise.race([
-      Promise.all([dbGet("deals"),dbGet("metas")]),
-      timeout
-    ]);
-    syncState("ok");
-    document.getElementById("loadingOverlay").style.display="none";
-    renderS1();
-  } catch(e){
-    // Connection failed or timed out — load demo data immediately
-    deals=getDemoDeals(); metas=getDemoMetas();
-    document.getElementById("syncDot").className="sync-dot err";
-    document.getElementById("syncLbl").textContent=e.message==="timeout"?"Sin conexión — modo demo":"Error BD — modo demo";
-    document.getElementById("loadingOverlay").style.display="none";
-    renderS1();
-  }
-}
+  // Always show the app — Supabase is best-effort
+  const hide = () => document.getElementById("loadingOverlay").style.display = "none";
 
-// ── DEMO DATA (fallback) ───────────────────────────────────────
-function getDemoDeals(){
-  const w=n=>WEEKS[n-1];
-  return [
-    {id:1,client_name:"Grupo Bimbo",salesperson:"Gus",city_core:"OOH",city_cores:[{city:"OOH",value:150000},{city:"Miraflores",value:100000}],week_number:10,...w(10),date_created:"2026-03-02",expected_close_date:w(10).weekEndDate,producto_medio:"Medios",tipo_venta:"Patrocinios",status:"Closed",potential_value:250000,closed_revenue:235000,prob:100,is_upselling:true,is_new_media:false,notes:"Renovación con upselling"},
-    {id:2,client_name:"Pepsi Co",salesperson:"Fao",city_core:"Oakland Place",week_number:10,...w(10),date_created:"2026-03-01",expected_close_date:w(11).weekEndDate,producto_medio:"Patrocinios",tipo_venta:"Experiencias",status:"In Negotiation",potential_value:180000,closed_revenue:0,prob:80,is_upselling:false,is_new_media:false,notes:"Renovación anual"},
-    {id:3,client_name:"Startup XYZ",salesperson:"Lau",city_core:"Miraflores",week_number:10,...w(10),date_created:"2026-03-03",expected_close_date:w(11).weekEndDate,producto_medio:"Experiencias",tipo_venta:"OOH",status:"Open",potential_value:90000,closed_revenue:0,prob:40,is_upselling:false,is_new_media:true,notes:"Nuevo cliente"},
-    {id:4,client_name:"OXXO",salesperson:"Rob",city_core:"Naranjo",city_cores:[{city:"Naranjo",value:180000},{city:"Portales",value:140000}],week_number:10,...w(10),date_created:"2026-03-01",expected_close_date:w(10).weekEndDate,producto_medio:"OOH",tipo_venta:"Plaza",status:"Closed",potential_value:320000,closed_revenue:310000,prob:100,is_upselling:false,is_new_media:false,notes:"Q2 cerrado"},
-    {id:5,client_name:"Banco Regional",salesperson:"Ale",city_core:"Portales",week_number:11,...w(11),date_created:"2026-03-08",expected_close_date:w(12).weekEndDate,producto_medio:"Medios",tipo_venta:"Medios",status:"In Negotiation",potential_value:150000,closed_revenue:0,prob:55,is_upselling:false,is_new_media:true,notes:"Demo pendiente"},
-    {id:6,client_name:"Telecom Sur",salesperson:"Pau",city_core:"OOH",week_number:10,...w(10),date_created:"2026-03-02",expected_close_date:w(10).weekEndDate,producto_medio:"Plaza",tipo_venta:"Patrocinios",status:"Closed",potential_value:95000,closed_revenue:95000,prob:100,is_upselling:true,is_new_media:false,notes:"Bundle cerrado"},
-    {id:7,client_name:"Cervecería Nacional",salesperson:"Gus",city_core:"Miraflores",week_number:11,...w(11),date_created:"2026-03-09",expected_close_date:w(12).weekEndDate,producto_medio:"Patrocinios",tipo_venta:"Experiencias",status:"Open",potential_value:200000,closed_revenue:0,prob:60,is_upselling:false,is_new_media:false,notes:"Propuesta enviada"},
-    {id:8,client_name:"Claro",salesperson:"Fao",city_core:"Naranjo",week_number:11,...w(11),date_created:"2026-03-10",expected_close_date:w(11).weekEndDate,producto_medio:"Medios",tipo_venta:"Medios",status:"Closed",potential_value:140000,closed_revenue:138000,prob:100,is_upselling:false,is_new_media:false,notes:"Cierre rápido"},
-    {id:9,client_name:"Samsung CR",salesperson:"Ale",city_core:"Portales",week_number:9,...w(9),date_created:"2026-02-23",expected_close_date:w(9).weekEndDate,producto_medio:"Experiencias",tipo_venta:"Experiencias",status:"Closed",potential_value:175000,closed_revenue:160000,prob:100,is_upselling:true,is_new_media:true,notes:"Upselling + nuevo medio"},
-    {id:10,client_name:"Walmart",salesperson:"Lau",city_core:"Naranjo",week_number:12,...w(12),date_created:"2026-03-16",expected_close_date:w(12).weekEndDate,producto_medio:"Plaza",tipo_venta:"Plaza",status:"In Negotiation",potential_value:220000,closed_revenue:0,prob:65,is_upselling:false,is_new_media:false,notes:"En proceso"},
-  ];
-}
-function getDemoMetas(){
-  return VENDEDORES.flatMap(v=>[{id:`${v}_10`,salesperson:v,week_number:10,meta:300000}]);
-}
+  // Start loading immediately — don't wait
+  hide();
+  renderS1();
 
-// ── S1 ─────────────────────────────────────────────────────────
-function renderS1(){
-  document.getElementById("vgrid").innerHTML=VENDEDORES.map((v,i)=>{
-    const vd=deals.filter(d=>d.salesperson===v);
-    const cr=vd.filter(d=>isClosed(d)).reduce((s,d)=>s+closedRev(d),0);
-    return `<div class="vcard" onclick="selectV('${v}')" id="vc-${v}">
-      <div class="vava" style="background:${VCL[i]}18;border-color:${VCL[i]}30;color:${VCL[i]}">${v.slice(0,2).toUpperCase()}</div>
-      <div class="vname">${v}</div>
-      <div class="vmeta">${vd.length} deals · ${$m(cr)} closed</div>
-    </div>`;
-  }).join("");
-}
-function selectV(v){
-  curV=v;
-  document.querySelectorAll(".vcard").forEach(c=>c.classList.remove("sel"));
-  document.getElementById("vc-"+v).classList.add("sel");
-  setTimeout(()=>{ document.getElementById("s2title").textContent=`Hola, ${v} 👋`; renderS2(); show("s2"); },180);
-}
-
-// ── S2 ─────────────────────────────────────────────────────────
-function renderS2(){
-  document.getElementById("weekList").innerHTML=VW.map(w=>{
-    const cnt=deals.filter(d=>d.salesperson===curV&&d.week_number===w.weekNumber).length;
-    return `<div class="wcard" onclick="selectW(${w.weekNumber})">
-      <div>
-        <div class="wlabel">${w.weekLabel}</div>
-        <div class="wrange">${w.weekRange}</div>
-        <div class="wdeals">${cnt?cnt+" deal"+(cnt!==1?"s":"")+" registrado"+(cnt!==1?"s":""):"Sin deals aún"}</div>
-      </div>
-      <span style="font-size:14px;color:var(--border)">→</span>
-    </div>`;
-  }).join("");
-}
-function selectW(wn){
-  curW=WEEKS[wn-1];
-  const m=getMeta(curV,wn);
-  if(!m){
-    document.getElementById("metaSub").textContent=`${curV} — ${curW.weekLabel} (${curW.weekRange})`;
-    document.getElementById("metaInp").value="";
-    document.getElementById("metaOv").classList.add("open");
-  }
-  setTimeout(()=>{ renderS3(); goS3(); },160);
-}
-function goS3(){
-  document.getElementById("topbarRight").style.display="flex";
-  document.getElementById("topbarName").textContent=`${curV} · ${curW.weekLabel}`;
-  document.getElementById("tabPipe").classList.add("on");
-  document.getElementById("tabDash").classList.remove("on");
-  show("s3");
-}
-
-// ── META ───────────────────────────────────────────────────────
-function getMeta(v,wn){
-  const m=metas.find(x=>x.salesperson===v&&x.week_number===wn);
-  return m?m.meta:0;
-}
-function openMetaModal(){
-  document.getElementById("metaSub").textContent=`${curV} — ${curW.weekLabel} (${curW.weekRange})`;
-  document.getElementById("metaInp").value=getMeta(curV,curW.weekNumber)||"";
-  document.getElementById("metaOv").classList.add("open");
-  setTimeout(()=>document.getElementById("metaInp").focus(),250);
-}
-function closeMetaModal(){document.getElementById("metaOv").classList.remove("open");}
-async function saveMeta(){
-  const val=+document.getElementById("metaInp").value||0;
-  const existing=metas.find(x=>x.salesperson===curV&&x.week_number===curW.weekNumber);
-  syncState("syncing");
-  try{
-    if(SUPABASE_URL.includes("TU_PROJECT_URL")){
-      // demo mode
-      if(existing) existing.meta=val;
-      else metas.push({id:Date.now(),salesperson:curV,week_number:curW.weekNumber,meta:val});
-    } else {
-      await dbUpsert("metas",{salesperson:curV,week_number:curW.weekNumber,meta:val},"salesperson,week_number");
-      metas=await dbGet("metas");
+  // Try Supabase in the background (3s max)
+  if(!SUPABASE_URL.includes("TU_PROJECT_URL")){
+    try{
+      const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error("timeout")), 3000));
+      const [d,m] = await Promise.race([
+        Promise.all([dbGet("deals"), dbGet("metas")]),
+        timeout
+      ]);
+      deals = d; metas = m;
+      syncState("ok");
+      // Refresh the current screen with real data
+      renderS1();
+      if(curV && curW) renderS3();
+    } catch(e){
+      syncState("err");
+      document.getElementById("syncLbl").textContent = "Sin conexión";
     }
-    syncState("ok");
-  } catch(e){ syncState("err"); alert("Error al guardar meta: "+e.message); }
-  closeMetaModal(); renderS3();
-}
-
-// ── S3 PIPELINE ────────────────────────────────────────────────
-function renderS3(){
-  const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
-  renderMetaBar(my); renderKPIs(my); renderDeals(my);
-}
-function renderMetaBar(my){
-  const meta=getMeta(curV,curW.weekNumber);
-  const fr=my.reduce((s,d)=>s+forecastRev(d),0);
-  const pct=meta>0?Math.min(Math.round(fr/meta*100),100):0;
-  document.getElementById("mCur").textContent=$m(fr);
-  document.getElementById("mGoal").textContent=meta>0?$m(meta):"Sin meta";
-  const bar=document.getElementById("mProg");
-  bar.style.width=pct+"%";
-  bar.style.background=pct>=80?"var(--green2)":pct>=50?"var(--gold)":"var(--sky)";
-  const pl=document.getElementById("mPctLbl");
-  if(meta>0){pl.textContent=pct+"% de meta";pl.className="meta-pct "+(pct>=80?"pct-hi":pct>=50?"pct-mid":"pct-low");}
-  else{pl.textContent="—";pl.className="meta-pct";}
-}
-function renderKPIs(my){
-  const tot=my.reduce((s,d)=>s+d.potential_value,0);
-  const fr=my.reduce((s,d)=>s+forecastRev(d),0);
-  const cl=my.filter(d=>isClosed(d));
-  const crv=cl.reduce((s,d)=>s+closedRev(d),0);
-  const ups=cl.filter(d=>d.is_upselling).reduce((s,d)=>s+closedRev(d),0);
-  document.getElementById("k1").textContent=$m(tot);
-  document.getElementById("k1s").textContent=my.length+" oportunidades";
-  document.getElementById("k2").textContent=$m(fr);
-  document.getElementById("k3").textContent=$m(crv);
-  document.getElementById("k3s").textContent=cl.length+" cerrado"+(cl.length!==1?"s":"");
-  document.getElementById("k4").textContent=$m(ups);
-  document.getElementById("dealsTitle").textContent=my.length?`${my.length} deal${my.length>1?"s":""}`:"Sin deals esta semana";
-}
-function renderDeals(my){
-  const st=document.getElementById("dealStack");
-  if(!my.length){
-    st.innerHTML=`<div class="empty"><div class="empty-ico">📭</div><div class="empty-t">Sin deals esta semana</div><p style="font-size:12px">Usa "+ Nuevo Deal" para agregar una oportunidad</p></div>`;
-    return;
+  } else {
+    deals = getDemoDeals(); metas = getDemoMetas();
+    document.getElementById("syncLbl").textContent = "Modo demo";
   }
-  // helper to get city_cores as array
-  const getCityCores = d => {
-    if(Array.isArray(d.city_cores) && d.city_cores.length) return d.city_cores;
-    if(d.city_core) return [{city:d.city_core, value: d.potential_value}];
-    return [{city:CITIES[0], value:0}];
-  };
-  st.innerHTML=my.map(d=>`
-  <div class="dc st-${stClass(d.status)}" id="dc-${d.id}">
-    <div class="dc-top" onclick="toggleDeal(${d.id})">
-      <div class="dc-ava">${initials(d.client_name)}</div>
-      <div class="dc-info">
-        <div class="dc-name">${d.client_name}</div>
-        <div class="dc-meta">
-          <span>${d.producto_medio}</span>
-          ${getCityCores(d).map(cc=>`<span class="city-tag">${cc.city} ${cc.value>0?$m(cc.value):""}</span>`).join("")}
-          ${d.is_new_media?'<span class="tag tag-gold">★ Nuevo Medio</span>':""}
-          ${d.is_upselling?'<span class="tag tag-blue">Upselling</span>':""}
-          ${isClosed(d)?'<span class="tag tag-green">✓ Closed</span>':""}
-        </div>
-      </div>
-      <div class="dc-right">
-        <div class="dc-val">${$m(d.potential_value)}</div>
-        <div class="dc-sub">Forecast: ${$m(forecastRev(d))}</div>
-        ${isClosed(d)?`<div class="dc-closed-val">Closed: ${$m(closedRev(d))}</div>`:""}
-        ${stBadge(d.status)}
-      </div>
-      <span class="chev" id="ch-${d.id}">▶</span>
-    </div>
-    <div class="dc-body" id="db-${d.id}">
-      <div class="fgrid">
-        <div class="field"><label>Status</label>
-          <select id="es_${d.id}" onchange="toggleCREdit(${d.id})">
-            ${STATUSES.map(s=>`<option${s===d.status?" selected":""}>${s}</option>`).join("")}
-          </select>
-        </div>
-        <div class="field"><label>Valor Potencial ($)</label><input type="number" id="ep_${d.id}" value="${d.potential_value}" min="0"></div>
-        <div class="field"><label>Producto / Medio</label>
-          <select id="epr_${d.id}">${PRODUCTOS.map(p=>`<option${p===d.producto_medio?" selected":""}>${p}</option>`).join("")}</select>
-        </div>
-        <div class="field"><label>¿Upselling?</label>
-          <select id="eu_${d.id}"><option value="0"${!d.is_upselling?" selected":""}>No</option><option value="1"${d.is_upselling?" selected":""}>Sí</option></select>
-        </div>
-        <div class="field"><label>¿Nuevo Medio?</label>
-          <select id="en_${d.id}"><option value="0"${!d.is_new_media?" selected":""}>No</option><option value="1"${d.is_new_media?" selected":""}>Sí</option></select>
-        </div>
-        <div class="field"><label>Fecha Est. Cierre</label><input type="date" id="ef_${d.id}" value="${d.expected_close_date||""}"></div>
-      </div>
-      <!-- City Core multi -->
-      <div style="margin-top:12px">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:8px;">City Core — monto por cada plaza</div>
-        <div class="city-rows" id="ec_rows_${d.id}"></div>
-        <button class="btn-city-add" onclick="addCityRow('ec_rows_${d.id}')" style="margin-top:8px">＋ Agregar City Core</button>
-      </div>
-      <div style="display:none">
-      </div>
-      </div>
-      <div id="crBox_${d.id}" class="closed-rev-box" style="${isClosed(d)?"":"display:none"}">
-        <label>✓ Closed Revenue — monto real negociado ($)</label>
-        <input type="number" id="ecr_${d.id}" value="${d.closed_revenue||""}" placeholder="0" min="0">
-      </div>
-      <div class="field" style="margin-top:11px">
-        <div class="prob-row"><label>Probabilidad</label><span class="prob-val" id="epl_${d.id}">${d.prob}%</span></div>
-        <input type="range" id="epb_${d.id}" min="0" max="100" value="${d.prob}" oninput="document.getElementById('epl_${d.id}').textContent=this.value+'%'">
-      </div>
-      <div class="field" style="margin-top:10px"><label>Notas</label><textarea id="eno_${d.id}">${d.notes||""}</textarea></div>
-      <div class="card-actions">
-        <span class="toast" id="tk_${d.id}">✓ Guardado</span>
-        <button class="btn-del" onclick="delDeal(${d.id})">Eliminar</button>
-        <button class="btn-save-deal" onclick="saveDeal(${d.id})">Guardar</button>
-      </div>
-    </div>
-  </div>`).join("");
 }
 
-function toggleCREdit(id){
-  const st=document.getElementById("es_"+id).value;
-  document.getElementById("crBox_"+id).style.display=st==="Closed"?"":"none";
-  if(st==="Closed"){document.getElementById("epb_"+id).value=100;document.getElementById("epl_"+id).textContent="100%";}
-  if(st==="Lost"){document.getElementById("epb_"+id).value=0;document.getElementById("epl_"+id).textContent="0%";}
-}
-function toggleDeal(id){
-  document.getElementById("db-"+id).classList.toggle("open");
-  document.getElementById("ch-"+id).classList.toggle("open");
-}
-async function saveDeal(id){
-  const st=document.getElementById("es_"+id).value;
-  const cityCoresEdit = getCityRowValues("ec_rows_"+id);
-  const totalPotEdit  = +document.getElementById("ep_"+id).value||0;
-  const body={
-    status:st,
-    potential_value:totalPotEdit,
-    producto_medio:document.getElementById("epr_"+id).value,
-    is_upselling:document.getElementById("eu_"+id).value==="1",
-    is_new_media:document.getElementById("en_"+id).value==="1",
-    expected_close_date:document.getElementById("ef_"+id).value,
-    city_core: cityCoresEdit.length ? cityCoresEdit[0].city : "OOH",
-    city_cores: cityCoresEdit,
-    closed_revenue:st==="Closed"?(+document.getElementById("ecr_"+id).value||0):0,
-    prob:+document.getElementById("epb_"+id).value,
-    notes:document.getElementById("eno_"+id).value,
-  };
-  syncState("syncing");
-  try{
-    if(SUPABASE_URL.includes("TU_PROJECT_URL")){
-      const i=deals.findIndex(d=>d.id===id); if(i>=0) Object.assign(deals[i],body);
-    } else {
-      await dbUpdate("deals",id,body);
-      deals=await dbGet("deals");
-    }
-    syncState("ok");
-  } catch(e){ syncState("err"); alert("Error al guardar: "+e.message); return; }
-  const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
-  renderMetaBar(my); renderKPIs(my); renderDeals(my);
-  setTimeout(()=>{
-    const b=document.getElementById("db-"+id), c=document.getElementById("ch-"+id);
-    if(b){b.classList.add("open");c.classList.add("open");}
-    const t=document.getElementById("tk_"+id);
-    if(t){t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2200);}
-  },40);
-}
-async function delDeal(id){
-  if(!confirm("¿Eliminar este deal?")) return;
-  syncState("syncing");
-  try{
-    if(SUPABASE_URL.includes("TU_PROJECT_URL")) deals=deals.filter(d=>d.id!==id);
-    else{ await dbDelete("deals",id); deals=await dbGet("deals"); }
-    syncState("ok");
-  } catch(e){ syncState("err"); alert("Error: "+e.message); return; }
-  const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
-  renderMetaBar(my); renderKPIs(my); renderDeals(my);
-}
-
-// ── NEW DEAL ───────────────────────────────────────────────────
 // ── City Core multi-row helpers ───────────────────────────────
 function addCityRow(containerId, city='', value=''){
   const c = document.getElementById(containerId);
