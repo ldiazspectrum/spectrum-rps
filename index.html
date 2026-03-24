@@ -562,6 +562,240 @@ async function init(){
   }
 }
 
+
+// ── S1 — Vendedor selection ────────────────────────────────────
+function renderS1(){
+  document.getElementById("vgrid").innerHTML=VENDEDORES.map((v,i)=>{
+    const vd=deals.filter(d=>d.salesperson===v);
+    const cr=vd.filter(d=>isClosed(d)).reduce((s,d)=>s+closedRev(d),0);
+    return `<div class="vcard" onclick="selectV('${v}')" id="vc-${v}">
+      <div class="vava" style="background:${VCL[i]}18;border-color:${VCL[i]}30;color:${VCL[i]}">${v.slice(0,2).toUpperCase()}</div>
+      <div class="vname">${v}</div>
+      <div class="vmeta">${vd.length} deals · ${$m(cr)} closed</div>
+    </div>`;
+  }).join("");
+}
+function selectV(v){
+  curV=v;
+  document.querySelectorAll(".vcard").forEach(c=>c.classList.remove("sel"));
+  document.getElementById("vc-"+v).classList.add("sel");
+  setTimeout(()=>{ document.getElementById("s2title").textContent=`Hola, ${v} 👋`; renderS2(); show("s2"); },180);
+}
+
+// ── S2 — Week selection ────────────────────────────────────────
+function renderS2(){
+  document.getElementById("weekList").innerHTML=VW.map(w=>{
+    const cnt=deals.filter(d=>d.salesperson===curV&&d.week_number===w.weekNumber).length;
+    return `<div class="wcard" onclick="selectW(${w.weekNumber})">
+      <div>
+        <div class="wlabel">${w.weekLabel}</div>
+        <div class="wrange">${w.weekRange}</div>
+        <div class="wdeals">${cnt?cnt+" deal"+(cnt!==1?"s":"")+" registrado"+(cnt!==1?"s":""):"Sin deals aún"}</div>
+      </div>
+      <span style="font-size:14px;color:var(--border)">→</span>
+    </div>`;
+  }).join("");
+}
+function selectW(wn){
+  curW=WEEKS[wn-1];
+  const m=getMeta(curV,wn);
+  if(!m){
+    document.getElementById("metaSub").textContent=`${curV} — ${curW.weekLabel} (${curW.weekRange})`;
+    document.getElementById("metaInp").value="";
+    document.getElementById("metaOv").classList.add("open");
+  }
+  setTimeout(()=>{ renderS3(); goS3(); },160);
+}
+function goS3(){
+  document.getElementById("topbarRight").style.display="flex";
+  document.getElementById("topbarName").textContent=`${curV} · ${curW.weekLabel}`;
+  document.getElementById("tabPipe").classList.add("on");
+  document.getElementById("tabDash").classList.remove("on");
+  show("s3");
+}
+
+// ── Meta ────────────────────────────────────────────────────────
+function getMeta(v,wn){
+  const m=metas.find(x=>x.salesperson===v&&x.week_number===wn);
+  return m?m.meta:0;
+}
+function openMetaModal(){
+  document.getElementById("metaSub").textContent=`${curV} — ${curW.weekLabel} (${curW.weekRange})`;
+  document.getElementById("metaInp").value=getMeta(curV,curW.weekNumber)||"";
+  document.getElementById("metaOv").classList.add("open");
+  setTimeout(()=>document.getElementById("metaInp").focus(),250);
+}
+function closeMetaModal(){document.getElementById("metaOv").classList.remove("open");}
+
+// ── S3 — Pipeline ───────────────────────────────────────────────
+function renderS3(){
+  const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
+  renderMetaBar(my); renderKPIs(my); renderDeals(my);
+}
+function renderMetaBar(my){
+  const meta=getMeta(curV,curW.weekNumber);
+  const fr=my.reduce((s,d)=>s+forecastRev(d),0);
+  const pct=meta>0?Math.min(Math.round(fr/meta*100),100):0;
+  document.getElementById("mCur").textContent=$m(fr);
+  document.getElementById("mGoal").textContent=meta>0?$m(meta):"Sin meta";
+  const bar=document.getElementById("mProg");
+  bar.style.width=pct+"%";
+  bar.style.background=pct>=80?"var(--green2)":pct>=50?"var(--gold)":"var(--sky)";
+  const pl=document.getElementById("mPctLbl");
+  if(meta>0){pl.textContent=pct+"% de meta";pl.className="meta-pct "+(pct>=80?"pct-hi":pct>=50?"pct-mid":"pct-low");}
+  else{pl.textContent="—";pl.className="meta-pct";}
+}
+function renderKPIs(my){
+  const tot=my.reduce((s,d)=>s+d.potential_value,0);
+  const fr=my.reduce((s,d)=>s+forecastRev(d),0);
+  const cl=my.filter(d=>isClosed(d));
+  const crv=cl.reduce((s,d)=>s+closedRev(d),0);
+  const ups=cl.filter(d=>d.is_upselling).reduce((s,d)=>s+closedRev(d),0);
+  document.getElementById("k1").textContent=$m(tot);
+  document.getElementById("k1s").textContent=my.length+" oportunidades";
+  document.getElementById("k2").textContent=$m(fr);
+  document.getElementById("k3").textContent=$m(crv);
+  document.getElementById("k3s").textContent=cl.length+" cerrado"+(cl.length!==1?"s":"");
+  document.getElementById("k4").textContent=$m(ups);
+  document.getElementById("dealsTitle").textContent=my.length?`${my.length} deal${my.length>1?"s":""}`:"Sin deals esta semana";
+}
+function renderDeals(my){
+  const getCityCores=d=>Array.isArray(d.city_cores)&&d.city_cores.length?d.city_cores:[{city:d.city_core||"OOH",value:d.potential_value}];
+  const st=document.getElementById("dealStack");
+  if(!my.length){
+    st.innerHTML=`<div class="empty"><div class="empty-ico">📭</div><div class="empty-t">Sin deals esta semana</div><p style="font-size:12px">Usa "+ Nuevo Deal" para agregar una oportunidad</p></div>`;
+    return;
+  }
+  st.innerHTML=my.map(d=>`
+  <div class="dc st-${stClass(d.status)}" id="dc-${d.id}">
+    <div class="dc-top" onclick="toggleDeal(${d.id})">
+      <div class="dc-ava">${initials(d.client_name)}</div>
+      <div class="dc-info">
+        <div class="dc-name">${d.client_name}</div>
+        <div class="dc-meta">
+          <span>${d.producto_medio}</span>
+          ${getCityCores(d).map(cc=>`<span class="city-tag">${cc.city}${cc.value>0?" "+$m(cc.value):""}</span>`).join("")}
+          ${d.is_new_media?'<span class="tag tag-gold">★ Nuevo Medio</span>':""}
+          ${d.is_upselling?'<span class="tag tag-blue">Upselling</span>':""}
+          ${isClosed(d)?'<span class="tag tag-green">✓ Closed</span>':""}
+        </div>
+      </div>
+      <div class="dc-right">
+        <div class="dc-val">${$m(d.potential_value)}</div>
+        <div class="dc-sub">Forecast: ${$m(forecastRev(d))}</div>
+        ${isClosed(d)?`<div class="dc-closed-val">Closed: ${$m(closedRev(d))}</div>`:""}
+        ${stBadge(d.status)}
+      </div>
+      <span class="chev" id="ch-${d.id}">▶</span>
+    </div>
+    <div class="dc-body" id="db-${d.id}">
+      <div class="fgrid">
+        <div class="field"><label>Status</label>
+          <select id="es_${d.id}" onchange="toggleCREdit(${d.id})">
+            ${STATUSES.map(s=>`<option${s===d.status?" selected":""}>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field"><label>Valor Potencial ($)</label><input type="number" id="ep_${d.id}" value="${d.potential_value}" min="0"></div>
+        <div class="field"><label>Producto / Medio</label>
+          <select id="epr_${d.id}">${PRODUCTOS.map(p=>`<option${p===d.producto_medio?" selected":""}>${p}</option>`).join("")}</select>
+        </div>
+        <div class="field"><label>¿Upselling?</label>
+          <select id="eu_${d.id}"><option value="0"${!d.is_upselling?" selected":""}>No</option><option value="1"${d.is_upselling?" selected":""}>Sí</option></select>
+        </div>
+        <div class="field"><label>¿Nuevo Medio?</label>
+          <select id="en_${d.id}"><option value="0"${!d.is_new_media?" selected":""}>No</option><option value="1"${d.is_new_media?" selected":""}>Sí</option></select>
+        </div>
+        <div class="field"><label>Fecha Est. Cierre</label><input type="date" id="ef_${d.id}" value="${d.expected_close_date||""}"></div>
+      </div>
+      <div style="margin-top:12px">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:8px">City Core — monto por plaza</div>
+        <div class="city-rows" id="ec_rows_${d.id}"></div>
+        <button class="btn-city-add" onclick="addCityRow('ec_rows_${d.id}')" style="margin-top:8px">＋ Agregar City Core</button>
+      </div>
+      <div id="crBox_${d.id}" class="closed-rev-box" style="${isClosed(d)?"":"display:none"}">
+        <label>✓ Closed Revenue — monto real negociado ($)</label>
+        <input type="number" id="ecr_${d.id}" value="${d.closed_revenue||""}" placeholder="0" min="0">
+      </div>
+      <div class="field" style="margin-top:11px">
+        <div class="prob-row"><label>Probabilidad</label><span class="prob-val" id="epl_${d.id}">${d.prob}%</span></div>
+        <input type="range" id="epb_${d.id}" min="0" max="100" value="${d.prob}" oninput="document.getElementById('epl_${d.id}').textContent=this.value+'%'">
+      </div>
+      <div class="field" style="margin-top:10px"><label>Notas</label><textarea id="eno_${d.id}">${d.notes||""}</textarea></div>
+      <div class="card-actions">
+        <span class="toast" id="tk_${d.id}">✓ Guardado</span>
+        <button class="btn-del" onclick="delDeal(${d.id})">Eliminar</button>
+        <button class="btn-save-deal" onclick="saveDeal(${d.id})">Guardar</button>
+      </div>
+    </div>
+  </div>`).join("");
+  setTimeout(()=>{
+    my.forEach(d=>{
+      const cont=document.getElementById("ec_rows_"+d.id);
+      if(cont&&!cont.children.length){
+        const cores=Array.isArray(d.city_cores)&&d.city_cores.length?d.city_cores:[{city:d.city_core||"OOH",value:d.potential_value}];
+        cores.forEach(cc=>addCityRow("ec_rows_"+d.id,cc.city,cc.value));
+      }
+    });
+  },50);
+}
+function toggleCREdit(id){
+  const st=document.getElementById("es_"+id).value;
+  document.getElementById("crBox_"+id).style.display=st==="Closed"?"":"none";
+  if(st==="Closed"){document.getElementById("epb_"+id).value=100;document.getElementById("epl_"+id).textContent="100%";}
+  if(st==="Lost"){document.getElementById("epb_"+id).value=0;document.getElementById("epl_"+id).textContent="0%";}
+}
+function toggleDeal(id){
+  document.getElementById("db-"+id).classList.toggle("open");
+  document.getElementById("ch-"+id).classList.toggle("open");
+}
+async function saveDeal(id){
+  const st=document.getElementById("es_"+id).value;
+  const cityCoresEdit=getCityRowValues("ec_rows_"+id);
+  const body={
+    status:st,
+    potential_value:+document.getElementById("ep_"+id).value||0,
+    producto_medio:document.getElementById("epr_"+id).value,
+    is_upselling:document.getElementById("eu_"+id).value==="1",
+    is_new_media:document.getElementById("en_"+id).value==="1",
+    expected_close_date:document.getElementById("ef_"+id).value,
+    city_core:cityCoresEdit.length?cityCoresEdit[0].city:"OOH",
+    city_cores:cityCoresEdit,
+    closed_revenue:st==="Closed"?(+document.getElementById("ecr_"+id).value||0):0,
+    prob:+document.getElementById("epb_"+id).value,
+    notes:document.getElementById("eno_"+id).value,
+  };
+  syncState("syncing");
+  try{
+    if(SUPABASE_URL.includes("TU_PROJECT_URL")){
+      const i=deals.findIndex(d=>d.id===id); if(i>=0) Object.assign(deals[i],body);
+    } else {
+      await dbUpdate("deals",id,body);
+      deals=await dbGet("deals");
+    }
+    syncState("ok");
+  } catch(e){ syncState("err"); alert("Error al guardar: "+e.message); return; }
+  const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
+  renderMetaBar(my); renderKPIs(my); renderDeals(my);
+  setTimeout(()=>{
+    const b=document.getElementById("db-"+id),c=document.getElementById("ch-"+id);
+    if(b){b.classList.add("open");c.classList.add("open");}
+    const t=document.getElementById("tk_"+id);
+    if(t){t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2200);}
+  },40);
+}
+async function delDeal(id){
+  if(!confirm("¿Eliminar este deal?")) return;
+  syncState("syncing");
+  try{
+    if(SUPABASE_URL.includes("TU_PROJECT_URL")) deals=deals.filter(d=>d.id!==id);
+    else{ await dbDelete("deals",id); deals=await dbGet("deals"); }
+    syncState("ok");
+  } catch(e){ syncState("err"); alert("Error: "+e.message); return; }
+  const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
+  renderMetaBar(my); renderKPIs(my); renderDeals(my);
+}
+
+
 // ── City Core multi-row helpers ───────────────────────────────
 function addCityRow(containerId, city='', value=''){
   const c = document.getElementById(containerId);
