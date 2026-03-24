@@ -446,11 +446,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;heigh
 
 <script>
 // ═══════════════════════════════════════════════════════════════
-// ⚠️  CONFIGURACIÓN — reemplaza con tus credenciales de Supabase
+// CONFIGURACIÓN SUPABASE
 // ═══════════════════════════════════════════════════════════════
-const const const SUPABASE_URL = "https://wqimdlyytkfeavqacopr.supabase.co";
+const SUPABASE_URL = "https://wqimdlyytkfeavqacopr.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndxaW1kbHl5dGtmZWF2cWFjb3ByIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyODI1MzgsImV4cCI6MjA4OTg1ODUzOH0.EEl-jtJVnULHyihT6u1ugYDbvVv3-86ryPRMWPlxGy4";
-// ═══════════════════════════════════════════════════════════════
 
 const VENDEDORES = ["Gus","Fao","Lau","Rob","Ale","Pau"];
 const CITIES     = ["OOH","Oakland Place","Miraflores","Naranjo","Portales"];
@@ -459,28 +458,26 @@ const STATUSES   = ["Open","In Negotiation","Closed","Lost"];
 const MONTHS     = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const VCL        = ["#0f1e3c","#2563b0","#16a34a","#b45309","#7c3aed","#0f766e"];
 
-// ── Week builder ──────────────────────────────────────────────
 function buildWeeks(year=2026,count=26){
   const weeks=[]; let d=new Date(year,0,5);
   for(let i=1;i<=count;i++){
-    const s=new Date(d), e=new Date(d); e.setDate(e.getDate()+6);
-    const sm=MONTHS[s.getMonth()], em=MONTHS[e.getMonth()];
+    const s=new Date(d),e=new Date(d); e.setDate(e.getDate()+6);
+    const sm=MONTHS[s.getMonth()],em=MONTHS[e.getMonth()];
     weeks.push({
-      weekNumber:i, weekLabel:`Semana ${i}`,
-      weekStartDate:fmt(s), weekEndDate:fmt(e),
+      weekNumber:i,weekLabel:`Semana ${i}`,
+      weekStartDate:fmt(s),weekEndDate:fmt(e),
       weekRange:`${sm} ${String(s.getDate()).padStart(2,'0')} – ${em} ${String(e.getDate()).padStart(2,'0')}`,
-      month:MONTHS[s.getMonth()], monthIndex:s.getMonth()
+      month:MONTHS[s.getMonth()],monthIndex:s.getMonth()
     });
     d.setDate(d.getDate()+7);
   }
   return weeks;
 }
 function fmt(d){return d.toISOString().slice(0,10);}
-const WEEKS=buildWeeks(); const VW=WEEKS.slice(0,20);
+const WEEKS=buildWeeks();
+const VW=WEEKS.slice(0,20);
 
-// ── DB helpers ─────────────────────────────────────────────────
 const headers={"Content-Type":"application/json","apikey":SUPABASE_KEY,"Authorization":"Bearer "+SUPABASE_KEY,"Prefer":"return=representation"};
-
 async function dbGet(table,filter=""){
   const r=await fetch(`${SUPABASE_URL}/rest/v1/${table}?select=*${filter}`,{headers});
   if(!r.ok) throw new Error(await r.text());
@@ -508,20 +505,16 @@ async function dbUpsert(table,body,onConflict){
   if(!r.ok) throw new Error(await r.text());
   return r.json();
 }
-
-// ── Sync indicator ─────────────────────────────────────────────
-function syncState(state,msg=""){
+function syncState(state){
   const dot=document.getElementById("syncDot"),lbl=document.getElementById("syncLbl");
   dot.className="sync-dot "+(state==="ok"?"ok":state==="err"?"err":"syncing");
   lbl.textContent=state==="ok"?"Conectado":state==="err"?"Sin conexión":"Guardando…";
 }
 
-// ── State (in-memory cache) ────────────────────────────────────
-let deals=[], metas=[];
-let curV="", curW=null;
-let spMode=false, spV="";
+let deals=[],metas=[];
+let curV="",curW=null;
+let spMode=false,spV="";
 
-// ── Computed helpers ───────────────────────────────────────────
 const isClosed=d=>d.status==="Closed";
 const forecastRev=d=>Math.round((d.potential_value||0)*(d.prob||0)/100);
 const closedRev=d=>isClosed(d)?(d.closed_revenue||d.potential_value||0):0;
@@ -530,40 +523,41 @@ const stBadge=s=>`<span class="badge badge-${stClass(s)}">${s}</span>`;
 const $m=n=>"$"+Math.round(n||0).toLocaleString("es-MX");
 const initials=n=>(n||"?").split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();
 
-// ── INIT ───────────────────────────────────────────────────────
 async function init(){
-  // Always show the app — Supabase is best-effort
-  const hide = () => document.getElementById("loadingOverlay").style.display = "none";
-
-  // Start loading immediately — don't wait
-  hide();
+  // Always show app instantly — no waiting
+  document.getElementById("loadingOverlay").style.display="none";
+  deals=getDemoDeals(); metas=getDemoMetas();
   renderS1();
-
-  // Try Supabase in the background (3s max)
-  if(!SUPABASE_URL.includes("TU_PROJECT_URL")){
-    try{
-      const timeout = new Promise((_,rej) => setTimeout(()=>rej(new Error("timeout")), 3000));
-      const [d,m] = await Promise.race([
-        Promise.all([dbGet("deals"), dbGet("metas")]),
-        timeout
-      ]);
-      deals = d; metas = m;
-      syncState("ok");
-      // Refresh the current screen with real data
-      renderS1();
-      if(curV && curW) renderS3();
-    } catch(e){
-      syncState("err");
-      document.getElementById("syncLbl").textContent = "Sin conexión";
-    }
-  } else {
-    deals = getDemoDeals(); metas = getDemoMetas();
-    document.getElementById("syncLbl").textContent = "Modo demo";
+  // Then try Supabase silently in background
+  try{
+    const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),4000));
+    const [d,m]=await Promise.race([Promise.all([dbGet("deals"),dbGet("metas")]),timeout]);
+    deals=d; metas=m;
+    syncState("ok");
+    renderS1();
+    if(curV&&curW) renderS3();
+  } catch(e){
+    syncState("err");
+    document.getElementById("syncLbl").textContent="Sin conexión";
   }
 }
 
+function getDemoDeals(){
+  const w=n=>WEEKS[n-1];
+  return [
+    {id:1,client_name:"Grupo Bimbo",salesperson:"Gus",city_core:"OOH",city_cores:[{city:"OOH",value:150000},{city:"Miraflores",value:100000}],week_number:10,...w(10),date_created:"2026-03-02",expected_close_date:w(10).weekEndDate,producto_medio:"Medios",status:"Closed",potential_value:250000,closed_revenue:235000,prob:100,is_upselling:true,is_new_media:false,notes:"Renovación con upselling"},
+    {id:2,client_name:"Pepsi Co",salesperson:"Fao",city_core:"Oakland Place",city_cores:[{city:"Oakland Place",value:180000}],week_number:10,...w(10),date_created:"2026-03-01",expected_close_date:w(11).weekEndDate,producto_medio:"Patrocinios",status:"In Negotiation",potential_value:180000,closed_revenue:0,prob:80,is_upselling:false,is_new_media:false,notes:"Renovación anual"},
+    {id:3,client_name:"Startup XYZ",salesperson:"Lau",city_core:"Miraflores",city_cores:[{city:"Miraflores",value:90000}],week_number:10,...w(10),date_created:"2026-03-03",expected_close_date:w(11).weekEndDate,producto_medio:"Experiencias",status:"Open",potential_value:90000,closed_revenue:0,prob:40,is_upselling:false,is_new_media:true,notes:"Nuevo cliente"},
+    {id:4,client_name:"OXXO",salesperson:"Rob",city_core:"Naranjo",city_cores:[{city:"Naranjo",value:180000},{city:"Portales",value:140000}],week_number:10,...w(10),date_created:"2026-03-01",expected_close_date:w(10).weekEndDate,producto_medio:"OOH",status:"Closed",potential_value:320000,closed_revenue:310000,prob:100,is_upselling:false,is_new_media:false,notes:"Q2 cerrado"},
+    {id:5,client_name:"Banco Regional",salesperson:"Ale",city_core:"Portales",city_cores:[{city:"Portales",value:150000}],week_number:11,...w(11),date_created:"2026-03-08",expected_close_date:w(12).weekEndDate,producto_medio:"Medios",status:"In Negotiation",potential_value:150000,closed_revenue:0,prob:55,is_upselling:false,is_new_media:true,notes:"Demo pendiente"},
+    {id:6,client_name:"Telecom Sur",salesperson:"Pau",city_core:"OOH",city_cores:[{city:"OOH",value:95000}],week_number:10,...w(10),date_created:"2026-03-02",expected_close_date:w(10).weekEndDate,producto_medio:"Plaza",status:"Closed",potential_value:95000,closed_revenue:95000,prob:100,is_upselling:true,is_new_media:false,notes:"Bundle cerrado"},
+  ];
+}
+function getDemoMetas(){
+  return VENDEDORES.map((v,i)=>({id:i+1,salesperson:v,week_number:10,meta:[400000,300000,250000,350000,280000,200000][i]}));
+}
 
-// ── S1 — Vendedor selection ────────────────────────────────────
+// ── S1 ─────────────────────────────────────────────────────────
 function renderS1(){
   document.getElementById("vgrid").innerHTML=VENDEDORES.map((v,i)=>{
     const vd=deals.filter(d=>d.salesperson===v);
@@ -579,10 +573,10 @@ function selectV(v){
   curV=v;
   document.querySelectorAll(".vcard").forEach(c=>c.classList.remove("sel"));
   document.getElementById("vc-"+v).classList.add("sel");
-  setTimeout(()=>{ document.getElementById("s2title").textContent=`Hola, ${v} 👋`; renderS2(); show("s2"); },180);
+  setTimeout(()=>{document.getElementById("s2title").textContent=`Hola, ${v} 👋`;renderS2();show("s2");},180);
 }
 
-// ── S2 — Week selection ────────────────────────────────────────
+// ── S2 ─────────────────────────────────────────────────────────
 function renderS2(){
   document.getElementById("weekList").innerHTML=VW.map(w=>{
     const cnt=deals.filter(d=>d.salesperson===curV&&d.week_number===w.weekNumber).length;
@@ -590,7 +584,7 @@ function renderS2(){
       <div>
         <div class="wlabel">${w.weekLabel}</div>
         <div class="wrange">${w.weekRange}</div>
-        <div class="wdeals">${cnt?cnt+" deal"+(cnt!==1?"s":"")+" registrado"+(cnt!==1?"s":""):"Sin deals aún"}</div>
+        <div class="wdeals">${cnt?cnt+` deal${cnt!==1?"s":""} registrado${cnt!==1?"s":""}`:"Sin deals aún"}</div>
       </div>
       <span style="font-size:14px;color:var(--border)">→</span>
     </div>`;
@@ -604,7 +598,7 @@ function selectW(wn){
     document.getElementById("metaInp").value="";
     document.getElementById("metaOv").classList.add("open");
   }
-  setTimeout(()=>{ renderS3(); goS3(); },160);
+  setTimeout(()=>{renderS3();goS3();},160);
 }
 function goS3(){
   document.getElementById("topbarRight").style.display="flex";
@@ -626,11 +620,26 @@ function openMetaModal(){
   setTimeout(()=>document.getElementById("metaInp").focus(),250);
 }
 function closeMetaModal(){document.getElementById("metaOv").classList.remove("open");}
+async function saveMeta(){
+  const val=+document.getElementById("metaInp").value||0;
+  const existing=metas.find(x=>x.salesperson===curV&&x.week_number===curW.weekNumber);
+  syncState("syncing");
+  try{
+    await dbUpsert("metas",{salesperson:curV,week_number:curW.weekNumber,meta:val},"salesperson,week_number");
+    metas=await dbGet("metas");
+    syncState("ok");
+  } catch(e){
+    if(existing) existing.meta=val;
+    else metas.push({id:Date.now(),salesperson:curV,week_number:curW.weekNumber,meta:val});
+    syncState("err");
+  }
+  closeMetaModal();renderS3();
+}
 
-// ── S3 — Pipeline ───────────────────────────────────────────────
+// ── S3 ─────────────────────────────────────────────────────────
 function renderS3(){
   const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
-  renderMetaBar(my); renderKPIs(my); renderDeals(my);
+  renderMetaBar(my);renderKPIs(my);renderDeals(my);
 }
 function renderMetaBar(my){
   const meta=getMeta(curV,curW.weekNumber);
@@ -660,7 +669,7 @@ function renderKPIs(my){
   document.getElementById("dealsTitle").textContent=my.length?`${my.length} deal${my.length>1?"s":""}`:"Sin deals esta semana";
 }
 function renderDeals(my){
-  const getCityCores=d=>Array.isArray(d.city_cores)&&d.city_cores.length?d.city_cores:[{city:d.city_core||"OOH",value:d.potential_value}];
+  const getCores=d=>Array.isArray(d.city_cores)&&d.city_cores.length?d.city_cores:[{city:d.city_core||"OOH",value:d.potential_value}];
   const st=document.getElementById("dealStack");
   if(!my.length){
     st.innerHTML=`<div class="empty"><div class="empty-ico">📭</div><div class="empty-t">Sin deals esta semana</div><p style="font-size:12px">Usa "+ Nuevo Deal" para agregar una oportunidad</p></div>`;
@@ -674,7 +683,7 @@ function renderDeals(my){
         <div class="dc-name">${d.client_name}</div>
         <div class="dc-meta">
           <span>${d.producto_medio}</span>
-          ${getCityCores(d).map(cc=>`<span class="city-tag">${cc.city}${cc.value>0?" "+$m(cc.value):""}</span>`).join("")}
+          ${getCores(d).map(cc=>`<span class="city-tag">${cc.city}${cc.value>0?" "+$m(cc.value):""}</span>`).join("")}
           ${d.is_new_media?'<span class="tag tag-gold">★ Nuevo Medio</span>':""}
           ${d.is_upselling?'<span class="tag tag-blue">Upselling</span>':""}
           ${isClosed(d)?'<span class="tag tag-green">✓ Closed</span>':""}
@@ -713,7 +722,7 @@ function renderDeals(my){
         <button class="btn-city-add" onclick="addCityRow('ec_rows_${d.id}')" style="margin-top:8px">＋ Agregar City Core</button>
       </div>
       <div id="crBox_${d.id}" class="closed-rev-box" style="${isClosed(d)?"":"display:none"}">
-        <label>✓ Closed Revenue — monto real negociado ($)</label>
+        <label>✓ Closed Revenue ($)</label>
         <input type="number" id="ecr_${d.id}" value="${d.closed_revenue||""}" placeholder="0" min="0">
       </div>
       <div class="field" style="margin-top:11px">
@@ -766,16 +775,16 @@ async function saveDeal(id){
   };
   syncState("syncing");
   try{
-    if(SUPABASE_URL.includes("TU_PROJECT_URL")){
-      const i=deals.findIndex(d=>d.id===id); if(i>=0) Object.assign(deals[i],body);
-    } else {
-      await dbUpdate("deals",id,body);
-      deals=await dbGet("deals");
-    }
+    await dbUpdate("deals",id,body);
+    deals=await dbGet("deals");
     syncState("ok");
-  } catch(e){ syncState("err"); alert("Error al guardar: "+e.message); return; }
+  } catch(e){
+    const i=deals.findIndex(d=>d.id===id);
+    if(i>=0) Object.assign(deals[i],body);
+    syncState("err");
+  }
   const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
-  renderMetaBar(my); renderKPIs(my); renderDeals(my);
+  renderMetaBar(my);renderKPIs(my);renderDeals(my);
   setTimeout(()=>{
     const b=document.getElementById("db-"+id),c=document.getElementById("ch-"+id);
     if(b){b.classList.add("open");c.classList.add("open");}
@@ -787,46 +796,44 @@ async function delDeal(id){
   if(!confirm("¿Eliminar este deal?")) return;
   syncState("syncing");
   try{
-    if(SUPABASE_URL.includes("TU_PROJECT_URL")) deals=deals.filter(d=>d.id!==id);
-    else{ await dbDelete("deals",id); deals=await dbGet("deals"); }
+    await dbDelete("deals",id);
+    deals=await dbGet("deals");
     syncState("ok");
-  } catch(e){ syncState("err"); alert("Error: "+e.message); return; }
+  } catch(e){
+    deals=deals.filter(d=>d.id!==id);
+    syncState("err");
+  }
   const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
-  renderMetaBar(my); renderKPIs(my); renderDeals(my);
+  renderMetaBar(my);renderKPIs(my);renderDeals(my);
 }
 
-
-// ── City Core multi-row helpers ───────────────────────────────
-function addCityRow(containerId, city='', value=''){
-  const c = document.getElementById(containerId);
+// ── City Core helpers ───────────────────────────────────────────
+function addCityRow(containerId,city='',value=''){
+  const c=document.getElementById(containerId);
   if(!c) return;
-  const idx = c.children.length;
-  const row = document.createElement('div');
-  row.className = 'city-row';
-  row.innerHTML = `
-    <select class="city-sel">
-      ${CITIES.map(ct=>`<option${ct===city?' selected':''}>${ct}</option>`).join('')}
-    </select>
+  const row=document.createElement('div');
+  row.className='city-row';
+  row.innerHTML=`
+    <select class="city-sel">${CITIES.map(ct=>`<option${ct===city?' selected':''}>${ct}</option>`).join('')}</select>
     <input type="number" class="city-val" placeholder="$ monto" min="0" value="${value}">
     <button class="btn-city-rm" onclick="this.parentElement.remove()">×</button>`;
   c.appendChild(row);
 }
-
 function getCityRowValues(containerId){
-  const c = document.getElementById(containerId);
+  const c=document.getElementById(containerId);
   if(!c) return [];
   return Array.from(c.querySelectorAll('.city-row')).map(r=>({
-    city: r.querySelector('.city-sel').value,
-    value: +r.querySelector('.city-val').value || 0
+    city:r.querySelector('.city-sel').value,
+    value:+r.querySelector('.city-val').value||0
   })).filter(x=>x.city);
 }
-
-function initCityRows(containerId, cityCores){
-  const arr = Array.isArray(cityCores) && cityCores.length ? cityCores : [];
-  arr.forEach(cc => addCityRow(containerId, cc.city, cc.value));
+function initCityRows(containerId,cityCores){
+  const arr=Array.isArray(cityCores)&&cityCores.length?cityCores:[];
+  arr.forEach(cc=>addCityRow(containerId,cc.city,cc.value));
   if(!arr.length) addCityRow(containerId);
 }
 
+// ── New Deal Modal ──────────────────────────────────────────────
 function openNewDeal(){
   ["nd_cl","nd_pv","nd_cr","nd_fe","nd_ps","nd_no"].forEach(i=>document.getElementById(i).value="");
   document.getElementById("nd_pb").value=50;
@@ -846,28 +853,20 @@ async function saveND(){
   if(!cl){alert("Por favor ingresa el nombre del cliente.");return;}
   const wk=curW||WEEKS[9];
   const st=document.getElementById("nd_st").value;
-  const pot=+document.getElementById("nd_pv").value||0;
+  const cityCores=getCityRowValues("nd_cityRows");
+  const pot=cityCores.length?cityCores.reduce((s,x)=>s+x.value,0)||+document.getElementById("nd_pv").value||0:+document.getElementById("nd_pv").value||0;
   const cr=st==="Closed"?(+document.getElementById("nd_cr").value||pot):0;
-  const cityCores = getCityRowValues("nd_cityRows");
-  const totalPot  = cityCores.length ? cityCores.reduce((s,x)=>s+x.value,0) || pot : pot;
   const body={
-    client_name:cl,
-    salesperson:curV,
-    city_core: cityCores.length ? cityCores[0].city : "OOH",
-    city_cores: cityCores,
-    week_number:wk.weekNumber,
-    week_label:wk.weekLabel,
-    week_start_date:wk.weekStartDate,
-    week_end_date:wk.weekEndDate,
-    week_range:wk.weekRange,
-    month:wk.month,
-    month_index:wk.monthIndex,
+    client_name:cl,salesperson:curV,
+    city_core:cityCores.length?cityCores[0].city:"OOH",
+    city_cores:cityCores,
+    week_number:wk.weekNumber,week_label:wk.weekLabel,
+    week_start_date:wk.weekStartDate,week_end_date:wk.weekEndDate,
+    week_range:wk.weekRange,month:wk.month,month_index:wk.monthIndex,
     date_created:fmt(new Date()),
     expected_close_date:document.getElementById("nd_fe").value,
     producto_medio:document.getElementById("nd_pr").value,
-    status:st,
-    potential_value:totalPot,
-    closed_revenue:cr,
+    status:st,potential_value:pot,closed_revenue:cr,
     prob:st==="Closed"?100:st==="Lost"?0:+document.getElementById("nd_pb").value,
     is_upselling:document.getElementById("nd_up").value==="1",
     is_new_media:document.getElementById("nd_nm").value==="1",
@@ -875,39 +874,44 @@ async function saveND(){
   };
   syncState("syncing");
   try{
-    if(SUPABASE_URL.includes("TU_PROJECT_URL")){
-      deals.push({...body,id:Date.now()});
-    } else {
-      await dbInsert("deals",body);
-      deals=await dbGet("deals");
-    }
+    await dbInsert("deals",body);
+    deals=await dbGet("deals");
     syncState("ok");
-  } catch(e){ syncState("err"); alert("Error al guardar: "+e.message); return; }
+  } catch(e){
+    deals.push({...body,id:Date.now()});
+    syncState("err");
+  }
   closeND();
   const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
-  renderMetaBar(my); renderKPIs(my); renderDeals(my);
+  renderMetaBar(my);renderKPIs(my);renderDeals(my);
 }
 
-// ── DASHBOARD ──────────────────────────────────────────────────
-function showPipe(){ document.getElementById("tabPipe").classList.add("on"); document.getElementById("tabDash").classList.remove("on"); show("s3"); }
-function showDash(){ document.getElementById("tabDash").classList.add("on"); document.getElementById("tabPipe").classList.remove("on"); populateFilters(); applyF(); show("sDash"); }
-
+// ── Dashboard ───────────────────────────────────────────────────
+function showPipe(){
+  document.getElementById("tabPipe").classList.add("on");
+  document.getElementById("tabDash").classList.remove("on");
+  show("s3");
+}
+function showDash(){
+  document.getElementById("tabDash").classList.add("on");
+  document.getElementById("tabPipe").classList.remove("on");
+  populateFilters();applyF();show("sDash");
+}
 function populateFilters(){
   const sel=(id,vals)=>{
-    const el=document.getElementById(id), prev=el.value;
+    const el=document.getElementById(id),prev=el.value;
     el.innerHTML=`<option value="">Todos</option>`+vals.map(v=>`<option value="${v}">${v}</option>`).join("");
     if(prev) el.value=prev;
   };
-  sel("fV",VENDEDORES); sel("fC",CITIES); sel("fP",PRODUCTOS); sel("fT",PRODUCTOS); sel("fSt",STATUSES);
-  const fw=document.getElementById("fW"), prevW=fw.value;
+  sel("fV",VENDEDORES);sel("fC",CITIES);sel("fP",PRODUCTOS);sel("fT",PRODUCTOS);sel("fSt",STATUSES);
+  const fw=document.getElementById("fW"),prevW=fw.value;
   fw.innerHTML=`<option value="">Todas</option>`+VW.map(w=>`<option value="${w.weekNumber}">${w.weekLabel} · ${w.weekRange}</option>`).join("");
   if(prevW) fw.value=prevW;
-  const fm=document.getElementById("fM"), prevM=fm.value;
+  const fm=document.getElementById("fM"),prevM=fm.value;
   const months=[...new Set(VW.map(w=>w.month))];
   fm.innerHTML=`<option value="">Todos</option>`+months.map(m=>`<option value="${m}">${m}</option>`).join("");
   if(prevM) fm.value=prevM;
 }
-
 function getF(){
   return{v:document.getElementById("fV").value,c:document.getElementById("fC").value,
     p:document.getElementById("fP").value,t:document.getElementById("fT").value,
@@ -917,13 +921,13 @@ function getF(){
 function filteredDeals(){
   const f=getF();
   return deals.filter(d=>{
-    if(f.v&&d.salesperson!==f.v)return false;
-    if(f.c&&d.city_core!==f.c)return false;
-    if(f.p&&d.producto_medio!==f.p)return false;
-    if(f.t&&d.tipo_venta!==f.t)return false;
-    if(f.st&&d.status!==f.st)return false;
-    if(f.w&&String(d.week_number)!==String(f.w))return false;
-    if(f.m&&d.month!==f.m)return false;
+    if(f.v&&d.salesperson!==f.v) return false;
+    if(f.c&&d.city_core!==f.c) return false;
+    if(f.p&&d.producto_medio!==f.p) return false;
+    if(f.t&&d.tipo_venta!==f.t) return false;
+    if(f.st&&d.status!==f.st) return false;
+    if(f.w&&String(d.week_number)!==String(f.w)) return false;
+    if(f.m&&d.month!==f.m) return false;
     return true;
   });
 }
@@ -935,16 +939,14 @@ function applyF(){
 }
 function clearF(){
   ["fV","fC","fP","fT","fSt","fW","fM"].forEach(id=>document.getElementById(id).value="");
-  spMode=false; spV="";
+  spMode=false;spV="";
   document.getElementById("spProfile").style.display="none";
   document.getElementById("dashMain").style.display="";
   applyF();
 }
-
 function renderDashMain(fd){
   document.getElementById("spProfile").style.display="none";
   document.getElementById("dashMain").style.display="";
-  // KPIs
   const tot=fd.reduce((s,d)=>s+d.potential_value,0);
   const fr=fd.reduce((s,d)=>s+forecastRev(d),0);
   const cl=fd.filter(d=>isClosed(d));
@@ -961,66 +963,67 @@ function renderDashMain(fd){
     ["New Media",$m(nm),"solo cerrados",""],
     ["Close Rate",rate+"%","cerrados/total",""],
   ].map(([l,v,s,c])=>`<div class="dkpi"><div class="dkpi-lbl">${l}</div><div class="dkpi-val ${c}">${v}</div><div class="dkpi-sub">${s}</div></div>`).join("");
-  // Scorecard
   const rows=VENDEDORES.map(v=>{
     const vd=fd.filter(d=>d.salesperson===v);
     if(!vd.length) return null;
-    const vc=vd.filter(d=>isClosed(d)), vl=vd.filter(d=>d.status==="Lost").length;
-    const rate=Math.round(vc.length/(vc.length+vl||1)*100);
-    return{v,total:vd.length,closed:vc.length,rate,pot:vd.reduce((s,d)=>s+d.potential_value,0),
-      crv:vc.reduce((s,d)=>s+closedRev(d),0),ups:vc.filter(d=>d.is_upselling).reduce((s,d)=>s+closedRev(d),0),
+    const vc=vd.filter(d=>isClosed(d)),vl=vd.filter(d=>d.status==="Lost").length;
+    const r=Math.round(vc.length/(vc.length+vl||1)*100);
+    return{v,total:vd.length,closed:vc.length,rate:r,
+      pot:vd.reduce((s,d)=>s+d.potential_value,0),
+      crv:vc.reduce((s,d)=>s+closedRev(d),0),
+      ups:vc.filter(d=>d.is_upselling).reduce((s,d)=>s+closedRev(d),0),
       nm:vc.filter(d=>d.is_new_media).reduce((s,d)=>s+closedRev(d),0)};
   }).filter(Boolean);
   const T=rows.reduce((a,r)=>({total:a.total+r.total,closed:a.closed+r.closed,pot:a.pot+r.pot,crv:a.crv+r.crv,ups:a.ups+r.ups,nm:a.nm+r.nm}),{total:0,closed:0,pot:0,crv:0,ups:0,nm:0});
   document.getElementById("dSc").innerHTML=
     `<thead><tr><th>Vendedor</th><th>Deals</th><th>Cerrados</th><th>Close%</th><th>Pipeline</th><th>Closed Rev.</th><th>Upselling</th><th>New Media</th></tr></thead><tbody>`+
     rows.map(r=>`<tr><td><span class="clickable" onclick="openSpProfile('${r.v}')">${r.v}</span></td><td>${r.total}</td><td>${r.closed}</td><td>${r.rate}%</td><td>${$m(r.pot)}</td><td style="color:var(--green)">${$m(r.crv)}</td><td>${$m(r.ups)}</td><td>${$m(r.nm)}</td></tr>`).join("")+
-    `</tbody><tfoot><tr class="total-row"><td>TOTAL</td><td>${T.total}</td><td>${T.closed}</td><td>${rows.length?Math.round(T.closed/(T.closed+(fd.filter(d=>d.status==="Lost").length)||1)*100):0}%</td><td>${$m(T.pot)}</td><td style="color:var(--green)">${$m(T.crv)}</td><td>${$m(T.ups)}</td><td>${$m(T.nm)}</td></tr></tfoot>`;
-  // Por estado
-  document.getElementById("dEst").innerHTML=STATUSES.map(s=>{const sd=fd.filter(d=>d.status===s);return`<div class="dr">${stBadge(s)}<span style="font-weight:800;color:var(--navy)">${$m(sd.reduce((a,d)=>a+d.potential_value,0))} <span style="color:var(--muted);font-weight:400;font-size:10px">(${sd.length})</span></span></div>`;}).join("");
+    `</tbody><tfoot><tr class="total-row"><td>TOTAL</td><td>${T.total}</td><td>${T.closed}</td><td>${rate}%</td><td>${$m(T.pot)}</td><td style="color:var(--green)">${$m(T.crv)}</td><td>${$m(T.ups)}</td><td>${$m(T.nm)}</td></tr></tfoot>`;
+  document.getElementById("dEst").innerHTML=STATUSES.map(s=>{
+    const sd=fd.filter(d=>d.status===s);
+    return`<div class="dr">${stBadge(s)}<span style="font-weight:800;color:var(--navy)">${$m(sd.reduce((a,d)=>a+d.potential_value,0))} <span style="color:var(--muted);font-weight:400;font-size:10px">(${sd.length})</span></span></div>`;
+  }).join("");
   const brs=(el,keyFn,vals,valFn,colFn)=>{
-    const max=Math.max(...vals.map(v=>valFn(fd.filter(d=>keyFn(d)===v))),1);
-    document.getElementById(el).innerHTML=vals.map((v,i)=>{const t=valFn(fd.filter(d=>keyFn(d)===v));if(!t)return"";return`<div style="padding:5px 0;border-bottom:1px solid var(--soft)"><div style="display:flex;justify-content:space-between;font-size:12px"><span>${v}</span><span style="font-weight:800">${$m(t)}</span></div><div class="bar-outer"><div class="bar-inner" style="width:${Math.round(t/max*100)}%;background:${colFn(i)}"></div></div></div>`;}).join("")||`<p style="font-size:12px;color:var(--muted);padding:8px 0">Sin datos</p>`;
+    const data=vals.map((v,i)=>({v,i,t:valFn(fd.filter(d=>keyFn(d)===v))})).filter(x=>x.t>0);
+    const max=Math.max(...data.map(x=>x.t),1);
+    document.getElementById(el).innerHTML=data.map(x=>`<div style="padding:5px 0;border-bottom:1px solid var(--soft)"><div style="display:flex;justify-content:space-between;font-size:12px"><span>${x.v}</span><span style="font-weight:800">${$m(x.t)}</span></div><div class="bar-outer"><div class="bar-inner" style="width:${Math.round(x.t/max*100)}%;background:${colFn(x.i)}"></div></div></div>`).join("")||`<p style="font-size:12px;color:var(--muted);padding:8px 0">Sin datos</p>`;
   };
   brs("dProd",d=>d.producto_medio,PRODUCTOS,ds=>ds.reduce((s,d)=>s+d.potential_value,0),i=>["var(--mid)","var(--gold)","var(--green)","var(--purple)","var(--teal)"][i]);
   brs("dTipo",d=>d.tipo_venta,PRODUCTOS,ds=>ds.reduce((s,d)=>s+d.potential_value,0),i=>["var(--sky)","var(--orange)","var(--teal)","var(--purple)","var(--gold)"][i]);
-  // City core breakdown uses city_cores array for per-city values
-  const cityTotals = {};
-  CITIES.forEach(c=>cityTotals[c]=0);
+  const cityTotals={};CITIES.forEach(c=>cityTotals[c]=0);
   fd.forEach(d=>{
-    const cores = Array.isArray(d.city_cores)&&d.city_cores.length ? d.city_cores : [{city:d.city_core||"OOH",value:d.potential_value}];
-    cores.forEach(cc=>{ if(cityTotals[cc.city]!==undefined) cityTotals[cc.city]+=(cc.value||0); });
+    const cores=Array.isArray(d.city_cores)&&d.city_cores.length?d.city_cores:[{city:d.city_core||"OOH",value:d.potential_value}];
+    cores.forEach(cc=>{if(cityTotals[cc.city]!==undefined)cityTotals[cc.city]+=(cc.value||0);});
   });
   const maxCity=Math.max(...Object.values(cityTotals),1);
   document.getElementById("dCity").innerHTML=CITIES.map((c,i)=>{
-    const t=cityTotals[c]; if(!t)return"";
+    const t=cityTotals[c];if(!t)return"";
     return`<div style="padding:5px 0;border-bottom:1px solid var(--soft)"><div style="display:flex;justify-content:space-between;font-size:12px"><span>${c}</span><span style="font-weight:800">${$m(t)}</span></div><div class="bar-outer"><div class="bar-inner" style="width:${Math.round(t/maxCity*100)}%;background:${VCL[i]}"></div></div></div>`;
   }).join("")||`<p style="font-size:12px;color:var(--muted);padding:8px 0">Sin datos</p>`;
-  // Cierres
   const now=new Date(),lim=new Date();lim.setDate(now.getDate()+30);
   const prox=fd.filter(d=>d.expected_close_date&&d.status!=="Closed"&&d.status!=="Lost").filter(d=>{const f=new Date(d.expected_close_date);return f>=now&&f<=lim;}).sort((a,b)=>new Date(a.expected_close_date)-new Date(b.expected_close_date)).slice(0,7);
   document.getElementById("dCierres").innerHTML=prox.length?prox.map(d=>`<div class="dr" style="flex-direction:column;align-items:flex-start;padding:7px 0"><div style="display:flex;justify-content:space-between;width:100%"><span style="font-weight:700">${d.client_name}</span><span style="font-weight:800;color:var(--navy)">${$m(d.potential_value)}</span></div><div style="font-size:10px;color:var(--muted);margin-top:2px;display:flex;gap:6px"><span>${d.salesperson}</span><span>·</span><span>${d.producto_medio}</span><span>·</span><span>${d.expected_close_date}</span>${stBadge(d.status)}</div></div>`).join(""):`<p style="font-size:12px;color:var(--muted);padding:10px 0">No hay cierres en los próximos 30 días</p>`;
 }
 
-// ── SALESPERSON PROFILE ────────────────────────────────────────
+// ── Salesperson Profile ─────────────────────────────────────────
 function openSpProfile(v){
-  spMode=true; spV=v;
+  spMode=true;spV=v;
   document.getElementById("fV").value=v;
   document.getElementById("spProfile").style.display="";
   document.getElementById("dashMain").style.display="none";
   renderSpProfile(v);
 }
 function closeSpProfile(){
-  spMode=false; spV="";
+  spMode=false;spV="";
   document.getElementById("fV").value="";
   document.getElementById("spProfile").style.display="none";
   document.getElementById("dashMain").style.display="";
   applyF();
 }
 function renderSpProfile(v){
-  const idx=VENDEDORES.indexOf(v), color=VCL[idx]||"var(--navy)";
+  const idx=VENDEDORES.indexOf(v),color=VCL[idx]||"var(--navy)";
   const vd=filteredDeals().filter(d=>d.salesperson===v);
-  const cl=vd.filter(d=>isClosed(d)), lost=vd.filter(d=>d.status==="Lost").length;
+  const cl=vd.filter(d=>isClosed(d)),lost=vd.filter(d=>d.status==="Lost").length;
   const rate=Math.round(cl.length/(cl.length+lost||1)*100);
   const pot=vd.reduce((s,d)=>s+d.potential_value,0);
   const crv=cl.reduce((s,d)=>s+closedRev(d),0);
@@ -1028,37 +1031,41 @@ function renderSpProfile(v){
   const nm=cl.filter(d=>d.is_new_media).reduce((s,d)=>s+closedRev(d),0);
   const fr=vd.reduce((s,d)=>s+forecastRev(d),0);
   const ava=document.getElementById("spAva");
-  ava.textContent=v.slice(0,2).toUpperCase(); ava.style.cssText=`width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;flex-shrink:0;background:${color}22;color:${color};border:2px solid ${color}33;`;
+  ava.textContent=v.slice(0,2).toUpperCase();
+  ava.style.cssText=`width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;flex-shrink:0;background:${color}22;color:${color};border:2px solid ${color}33;`;
   document.getElementById("spName").textContent=v;
   document.getElementById("spMeta").textContent=`${vd.length} deals · ${cl.length} cerrados · Close Rate ${rate}%`;
   document.getElementById("spKpis").innerHTML=[
-    ["Pipeline",$m(pot),vd.length+" deals",""],["Forecast Rev.",$m(fr),"prob × potencial","gold"],
-    ["Closed Revenue",$m(crv),cl.length+" cerrados","green"],["Close Rate",rate+"%","cerrados/(c+l)",""],
-    ["Upselling",$m(ups),"solo cerrados","sky"],["New Media",$m(nm),"solo cerrados",""],
+    ["Pipeline",$m(pot),vd.length+" deals",""],
+    ["Forecast Rev.",$m(fr),"prob × potencial","gold"],
+    ["Closed Revenue",$m(crv),cl.length+" cerrados","green"],
+    ["Close Rate",rate+"%","cerrados/(c+l)",""],
+    ["Upselling",$m(ups),"solo cerrados","sky"],
+    ["New Media",$m(nm),"solo cerrados",""],
   ].map(([l,v,s,c])=>`<div class="dkpi"><div class="dkpi-lbl">${l}</div><div class="dkpi-val ${c}">${v}</div><div class="dkpi-sub">${s}</div></div>`).join("");
-  // Trend
   const wd=VW.slice(0,16).map(w=>({label:"S"+w.weekNumber,pot:vd.filter(d=>d.week_number===w.weekNumber).reduce((s,d)=>s+d.potential_value,0),cr:vd.filter(d=>d.week_number===w.weekNumber&&isClosed(d)).reduce((s,d)=>s+closedRev(d),0)})).filter(x=>x.pot||x.cr);
   const maxW=Math.max(...wd.map(x=>x.pot),1);
-  const trend=wd.length?`<div class="trend-bars">`+wd.map(x=>`<div class="trend-bar-wrap"><div class="trend-bar" style="height:${Math.max(Math.round(x.pot/maxW*52),3)}px;background:${color}25;position:relative;"><div style="position:absolute;bottom:0;width:100%;background:${color};height:${Math.round(x.cr/maxW*52)}px;border-radius:3px 3px 0 0;"></div></div><div class="trend-lbl">${x.label}</div></div>`).join("")+`</div><div style="display:flex;gap:12px;margin-top:8px;font-size:10px;color:var(--muted)"><span><span style="display:inline-block;width:9px;height:9px;background:${color}25;border-radius:2px;margin-right:3px"></span>Pipeline</span><span><span style="display:inline-block;width:9px;height:9px;background:${color};border-radius:2px;margin-right:3px"></span>Closed</span></div>`:`<p style="font-size:12px;color:var(--muted);padding:8px 0">Sin datos</p>`;
-  const maxTM=Math.max(...PRODUCTOS.map(p=>vd.filter(d=>d.tipo_venta===p).length),1);
-  const tipoC=PRODUCTOS.map((p,i)=>{const n=vd.filter(d=>d.tipo_venta===p).length;if(!n)return"";return`<div style="padding:5px 0;border-bottom:1px solid var(--soft)"><div style="display:flex;justify-content:space-between;font-size:12px"><span>${p}</span><span style="font-weight:700">${n}</span></div><div class="bar-outer"><div class="bar-inner" style="width:${Math.round(n/maxTM*100)}%;background:${["var(--mid)","var(--gold)","var(--green)","var(--purple)","var(--teal)"][i]}"></div></div></div>`;}).join("")||`<p style="font-size:12px;color:var(--muted)">Sin datos</p>`;
+  const trend=wd.length?`<div class="trend-bars">`+wd.map(x=>`<div class="trend-bar-wrap"><div class="trend-bar" style="height:${Math.max(Math.round(x.pot/maxW*52),3)}px;background:${color}25;position:relative;"><div style="position:absolute;bottom:0;width:100%;background:${color};height:${Math.round(x.cr/maxW*52)}px;border-radius:3px 3px 0 0;"></div></div><div class="trend-lbl">${x.label}</div></div>`).join("")+`</div>`:`<p style="font-size:12px;color:var(--muted);padding:8px 0">Sin datos</p>`;
+  const maxTM=Math.max(...PRODUCTOS.map(p=>vd.filter(d=>d.producto_medio===p).length),1);
+  const tipoC=PRODUCTOS.map((p,i)=>{const n=vd.filter(d=>d.producto_medio===p).length;if(!n)return"";return`<div style="padding:5px 0;border-bottom:1px solid var(--soft)"><div style="display:flex;justify-content:space-between;font-size:12px"><span>${p}</span><span style="font-weight:700">${n}</span></div><div class="bar-outer"><div class="bar-inner" style="width:${Math.round(n/maxTM*100)}%;background:${["var(--mid)","var(--gold)","var(--green)","var(--purple)","var(--teal)"][i]}"></div></div></div>`;}).join("")||`<p style="font-size:12px;color:var(--muted)">Sin datos</p>`;
   const spCityTotals={};CITIES.forEach(c=>spCityTotals[c]=0);
   vd.forEach(d=>{const cores=Array.isArray(d.city_cores)&&d.city_cores.length?d.city_cores:[{city:d.city_core||"OOH",value:d.potential_value}];cores.forEach(cc=>{if(spCityTotals[cc.city]!==undefined)spCityTotals[cc.city]+=(cc.value||0);});});
   const maxCM=Math.max(...Object.values(spCityTotals),1);
   const cityC=CITIES.map((c,i)=>{const t=spCityTotals[c];if(!t)return"";return`<div style="padding:5px 0;border-bottom:1px solid var(--soft)"><div style="display:flex;justify-content:space-between;font-size:12px"><span>${c}</span><span style="font-weight:700">${$m(t)}</span></div><div class="bar-outer"><div class="bar-inner" style="width:${Math.round(t/maxCM*100)}%;background:${VCL[i]}"></div></div></div>`;}).join("")||`<p style="font-size:12px;color:var(--muted)">Sin datos</p>`;
   document.getElementById("spCharts").innerHTML=`
     <div class="dcard"><div class="dcard-title">Tendencia semanal</div>${trend}</div>
-    <div class="dcard"><div class="dcard-title">Mix Tipo de Venta</div>${tipoC}</div>
+    <div class="dcard"><div class="dcard-title">Mix Producto / Medio</div>${tipoC}</div>
     <div class="dcard"><div class="dcard-title">City Core</div>${cityC}</div>`;
 }
 
-// ── UTILS ──────────────────────────────────────────────────────
+// ── Utils ───────────────────────────────────────────────────────
 function show(id){document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));document.getElementById(id).classList.add("active");}
 function go(n){if(n===1)show("s1");else show("s2");}
 function resetAll(){curV="";curW=null;document.getElementById("topbarRight").style.display="none";show("s1");}
 
-// ── START ──────────────────────────────────────────────────────
+// ── START ───────────────────────────────────────────────────────
 init();
+
 </script>
 </body>
 </html>
