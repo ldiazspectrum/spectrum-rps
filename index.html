@@ -524,21 +524,29 @@ const $m=n=>"$"+Math.round(n||0).toLocaleString("es-MX");
 const initials=n=>(n||"?").split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();
 
 async function init(){
-  // Always show app instantly — no waiting
+  // 1. Show app instantly with local data
   document.getElementById("loadingOverlay").style.display="none";
-  deals=getDemoDeals(); metas=getDemoMetas();
+  const local=loadLocal();
+  if(local&&local.deals&&local.deals.length){
+    deals=local.deals; metas=local.metas||[];
+    document.getElementById("syncLbl").textContent="Datos locales";
+  } else {
+    deals=getDemoDeals(); metas=getDemoMetas();
+    document.getElementById("syncLbl").textContent="Modo demo";
+  }
   renderS1();
-  // Then try Supabase silently in background
+  // 2. Sync with Supabase silently (5s timeout)
   try{
-    const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),4000));
+    const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),5000));
     const [d,m]=await Promise.race([Promise.all([dbGet("deals"),dbGet("metas")]),timeout]);
-    deals=d; metas=m;
+    deals=d; metas=m; saveLocal();
     syncState("ok");
     renderS1();
     if(curV&&curW) renderS3();
   } catch(e){
     syncState("err");
-    document.getElementById("syncLbl").textContent="Sin conexión";
+    document.getElementById("syncLbl").textContent=local?"Sin conexión (datos locales)":"Sin conexión";
+    scheduleRetry();
   }
 }
 
@@ -773,16 +781,11 @@ async function saveDeal(id){
     prob:+document.getElementById("epb_"+id).value,
     notes:document.getElementById("eno_"+id).value,
   };
-  syncState("syncing");
-  try{
-    await dbUpdate("deals",id,body);
-    deals=await dbGet("deals");
-    syncState("ok");
-  } catch(e){
-    const i=deals.findIndex(d=>d.id===id);
-    if(i>=0) Object.assign(deals[i],body);
-    syncState("err");
-  }
+  // 1. Save locally first — always works, instant
+  const i=deals.findIndex(d=>d.id===id);
+  if(i>=0) Object.assign(deals[i],body);
+  saveLocal();
+  // 2. Show saved immediately
   const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
   renderMetaBar(my);renderKPIs(my);renderDeals(my);
   setTimeout(()=>{
@@ -791,20 +794,37 @@ async function saveDeal(id){
     const t=document.getElementById("tk_"+id);
     if(t){t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2200);}
   },40);
+  // 3. Sync to Supabase in background — don't block UI
+  syncState("syncing");
+  try{
+    await dbUpdate("deals",id,body);
+    syncState("ok");
+    // Refresh from server silently
+    const fresh=await dbGet("deals");
+    deals=fresh; saveLocal();
+  } catch(e){
+    // Local save already done above — just show warning
+    syncState("err");
+    document.getElementById("syncLbl").textContent="Guardado local · sin conexión";
+    scheduleRetry();
+  }
 }
 async function delDeal(id){
   if(!confirm("¿Eliminar este deal?")) return;
+  // Delete locally first
+  deals=deals.filter(d=>d.id!==id);
+  saveLocal();
+  const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
+  renderMetaBar(my);renderKPIs(my);renderDeals(my);
+  // Sync in background
   syncState("syncing");
   try{
     await dbDelete("deals",id);
-    deals=await dbGet("deals");
     syncState("ok");
   } catch(e){
-    deals=deals.filter(d=>d.id!==id);
     syncState("err");
+    document.getElementById("syncLbl").textContent="Eliminado local · sin conexión";
   }
-  const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
-  renderMetaBar(my);renderKPIs(my);renderDeals(my);
 }
 
 // ── City Core helpers ───────────────────────────────────────────
@@ -872,18 +892,34 @@ async function saveND(){
     is_new_media:document.getElementById("nd_nm").value==="1",
     notes:document.getElementById("nd_no").value,
   };
-  syncState("syncing");
-  try{
-    await dbInsert("deals",body);
-    deals=await dbGet("deals");
-    syncState("ok");
-  } catch(e){
-    deals.push({...body,id:Date.now()});
-    syncState("err");
-  }
+  // 1. Save locally first
+  const localId=Date.now();
+  deals.push({...body,id:localId,_pending:true});
+  saveLocal();
   closeND();
   const my=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
   renderMetaBar(my);renderKPIs(my);renderDeals(my);
+  // 2. Sync to Supabase in background
+  syncState("syncing");
+  try{
+    const saved=await dbInsert("deals",body);
+    // Replace local pending deal with server version
+    const serverDeal=Array.isArray(saved)?saved[0]:saved;
+    deals=deals.filter(d=>d.id!==localId);
+    if(serverDeal) deals.push({...serverDeal,_pending:false});
+    const fresh=await dbGet("deals");
+    deals=fresh; saveLocal();
+    syncState("ok");
+    const my2=deals.filter(d=>d.salesperson===curV&&d.week_number===curW.weekNumber);
+    renderMetaBar(my2);renderKPIs(my2);renderDeals(my2);
+  } catch(e){
+    // Keep local version — will retry
+    deals=deals.map(d=>d.id===localId?{...d,_pending:true}:d);
+    saveLocal();
+    syncState("err");
+    document.getElementById("syncLbl").textContent="Guardado local · sin conexión";
+    scheduleRetry();
+  }
 }
 
 // ── Dashboard ───────────────────────────────────────────────────
@@ -1056,6 +1092,53 @@ function renderSpProfile(v){
     <div class="dcard"><div class="dcard-title">Tendencia semanal</div>${trend}</div>
     <div class="dcard"><div class="dcard-title">Mix Producto / Medio</div>${tipoC}</div>
     <div class="dcard"><div class="dcard-title">City Core</div>${cityC}</div>`;
+}
+
+// ── Local storage persistence ───────────────────────────────────
+const LS_KEY="rps_local_v1";
+function saveLocal(){
+  try{ localStorage.setItem(LS_KEY,JSON.stringify({deals,metas})); } catch(e){}
+}
+function loadLocal(){
+  try{
+    const d=localStorage.getItem(LS_KEY);
+    if(d){ const p=JSON.parse(d); return p; }
+  } catch(e){}
+  return null;
+}
+
+// ── Retry pending syncs ─────────────────────────────────────────
+let retryTimer=null;
+function scheduleRetry(){
+  if(retryTimer) return;
+  retryTimer=setTimeout(async()=>{
+    retryTimer=null;
+    try{
+      const pending=deals.filter(d=>d._pending);
+      if(pending.length){
+        for(const d of pending){
+          const {_pending,id,...body}=d;
+          try{
+            if(typeof id==="number"&&id>1700000000000){
+              const saved=await dbInsert("deals",body);
+              const sd=Array.isArray(saved)?saved[0]:saved;
+              deals=deals.filter(x=>x.id!==id);
+              if(sd) deals.push({...sd,_pending:false});
+            } else {
+              await dbUpdate("deals",id,body);
+              deals=deals.map(x=>x.id===id?{...x,_pending:false}:x);
+            }
+          } catch(e2){ /* keep pending */ }
+        }
+        saveLocal();
+      }
+      const [freshDeals,freshMetas]=await Promise.all([dbGet("deals"),dbGet("metas")]);
+      deals=freshDeals; metas=freshMetas; saveLocal();
+      syncState("ok");
+      renderS1();
+      if(curV&&curW) renderS3();
+    } catch(e){ scheduleRetry(); }
+  },15000); // retry after 15s
 }
 
 // ── Utils ───────────────────────────────────────────────────────
